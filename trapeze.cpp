@@ -29,7 +29,12 @@ int main(int argc, char *argv[]) {
     PolygonalMesh net_mesh;
     net_mesh.loadFile("net.obj");
     Body::Rigid net_body(MassProperties(1.0, Vec3(0.0), Inertia(1.0)));
-    net_body.addDecoration(Transform(), DecorativeMesh(net_mesh));
+    DecorativeMesh net_mesh_decor(net_mesh);
+    // net_mesh_decor.setOpacity(0.5);
+    net_mesh_decor.setRepresentation(DecorativeGeometry::DrawWireframe);
+    net_mesh_decor.setLineThickness(2.0);
+    net_mesh_decor.setColor(Vec3(1.0, 1.0, 1.0));
+    net_body.addDecoration(Transform(), net_mesh_decor);
     MobilizedBody::Pin net(matter.Ground(), Transform(Vec3(net_offset, net_height, 0.0)),
         net_body, Transform(Vec3(0, 0, 0)));
 
@@ -125,15 +130,29 @@ int main(int argc, char *argv[]) {
     MobilizedBody::Pin lower_legs(upper_legs, Transform(Vec3(0,-upper_legs_length,0.0)),
         lower_legs_body, Transform(Vec3(0, 0, 0)));
 
-    double damping=200.0;
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper lines_fly_crane_damper(forces, lines_bar, MobilizerUIndex(0), 20.0);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hands_damper(forces, lower_arms, MobilizerUIndex(0), damping);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper elbows_damper(forces, upper_arms, MobilizerUIndex(0), damping);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper shoulder_damper(forces, torso_head, MobilizerUIndex(0), damping);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hips_damper(forces, upper_legs, MobilizerUIndex(0), damping);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper knees_damper(forces, lower_legs, MobilizerUIndex(0), damping);
+    double damping=50.0;
+    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper lines_fly_crane_damper(forces, lines_bar, MobilizerUIndex(0), 100.0);
+    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hands_damper(forces, lower_arms, MobilizerUIndex(0), damping);
+    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper elbows_damper(forces, upper_arms, MobilizerUIndex(0), damping);
+    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper shoulder_damper(forces, torso_head, MobilizerUIndex(0), damping);
+    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hips_damper(forces, upper_legs, MobilizerUIndex(0), damping);
+    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper knees_damper(forces, lower_legs, MobilizerUIndex(0), damping);
 
-    double fps = 60.0;
+    double fix_anchor=1.0, fix_hands=1.0, fix_elbows=1.0, fix_shoulders=1.0, fix_hips=1.0, fix_knees=1.0;
+    SimTK::Force::MobilityLinearStop::MobilityLinearStop anchor_stop(forces, lines_bar, MobilizerQIndex(0), 
+        1000.0, 1000.0, -fix_anchor*180.0*M_PI/180.0, fix_anchor*180.0*M_PI/180.0);
+    SimTK::Force::MobilityLinearStop::MobilityLinearStop hands_stop(forces, lower_arms, MobilizerQIndex(0), 
+        1000.0, 1000.0, -fix_hands*180.0*M_PI/180.0, fix_hands*180.0*M_PI/180.0);
+    SimTK::Force::MobilityLinearStop::MobilityLinearStop elbows_stop(forces, upper_arms, MobilizerQIndex(0), 
+        1000.0, 1000.0, fix_elbows*0.0*M_PI/180.0, fix_elbows*160.0*M_PI/180.0);
+    SimTK::Force::MobilityLinearStop::MobilityLinearStop shoulders_stop(forces, torso_head, MobilizerQIndex(0), 
+        1000.0, 1000.0, -fix_shoulders*160.0*M_PI/180.0, fix_shoulders*5.0*M_PI/180.0);
+    SimTK::Force::MobilityLinearStop::MobilityLinearStop hips_stop(forces, upper_legs, MobilizerQIndex(0), 
+        1000.0, 1000.0, -fix_hips*150.0*M_PI/180.0, fix_hips*10.0*M_PI/180.0);
+    SimTK::Force::MobilityLinearStop::MobilityLinearStop knees_stop(forces, lower_legs, MobilizerQIndex(0), 
+        1000.0, 1000.0, fix_knees*0.0*M_PI/180.0, fix_knees*150.0*M_PI/180.0);
+
+    double fps = 120.0;
     double dt = 1.0/fps;
 
     // Set up visualization.
@@ -142,14 +161,29 @@ int main(int argc, char *argv[]) {
     viz.setCameraFieldOfView(0.8);
 
     viz.setMode(SimTK::Visualizer::RealTime);
+    // slo-mo
+    fps *= 0.01;
+    viz.setRealTimeScale(0.01);
+    //
     system.addEventReporter(new Visualizer::Reporter(viz, dt));
 
     // Initialize the system and state.
     system.realizeTopology ();
     State state = system.getDefaultState();
-    lines_bar.setRate(state, 1.0);
-    lower_arms.setRate(state, 5.0);
-    upper_arms.setRate(state, -5.0);
+    // lines_bar.setRate(state, 1.0);
+    // lower_arms.setRate(state, 5.0);
+    // upper_arms.setRate(state, -5.0);
+    // lower_arms.setAngle(state, 45.0*M_PI/180.0);
+
+    // lines_bar.setAngle(state, 45.0*M_PI/180.0);
+
+    // torso_head.setAngle(state, -110.0*M_PI/180.0);
+    // torso_head.setRate(state, 10.0);
+
+    upper_arms.setAngle(state, 45.0*M_PI/180.0);
+    upper_arms.setRate(state, 50.0);
+
+
 
     // Simulate it.
     RungeKuttaMersonIntegrator integ(system);
