@@ -1,0 +1,14 @@
+body_density 1000.0
+lower_arms_length 0.3
+lower_arms_radius 0.04
+upper_arms_length 0.3
+upper_arms_radius 0.05
+torso_length 0.576
+torso_width 0.384
+torso_depth 0.1536
+head_radius 0.12
+neck_length 0.03
+upper_legs_length 0.52
+upper_legs_radius 0.08
+lower_legs_length 0.48
+lower_legs_radius 0.06
