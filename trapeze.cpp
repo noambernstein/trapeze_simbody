@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
 
     // rig properties
     double fly_crane_height = 9.7, fly_crane_width=2.0, fly_crane_thickness=0.1;
-    double net_height = 2.5, net_offset=-4.0;
+    double net_height = 2.5, net_offset=-5.0;
     double lines_length = 3.64, lines_radius = 0.0025, lines_mass = 2.0;
     double bar_length = 0.9, bar_radius=0.01, bar_mass = 3.0;
     double board_height = 6.97, board_offset = 4.45;
