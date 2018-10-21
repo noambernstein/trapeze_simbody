@@ -15,9 +15,21 @@ int main(int argc, char *argv[]) {
     Force::UniformGravity gravity(forces, matter, Vec3(0, -9.8, 0)); 
 
     // rig properties
-    double lines_length = 3.0, lines_radius = 0.002, lines_mass = 2.0;
-    double bar_length = 0.6, bar_radius=0.007, bar_mass = 3.0;
-    double anchor_height = 8.5;
+    double fly_crane_height = 9.7, fly_crane_width=2.0, fly_crane_thickness=0.1;
+    double net_height = 2.5;
+    double lines_length = 3.64, lines_radius = 0.0025, lines_mass = 2.0;
+    double bar_length = 0.9, bar_radius=0.01, bar_mass = 3.0;
+    double board_height = 6.97, board_offset = 4.45;
+
+    Body::Rigid fly_crane_body(MassProperties(1.0, Vec3(0.0), Inertia(1.0)));
+    fly_crane_body.addDecoration(Transform(), DecorativeBrick(Vec3(fly_crane_thickness/2.0,fly_crane_thickness/2.0,fly_crane_width)));
+    MobilizedBody::Pin fly_crane(matter.Ground(), Transform(Vec3(0.0, fly_crane_height+fly_crane_thickness/2.0, 0.0)),
+        fly_crane_body, Transform(Vec3(0, 0, 0)));
+
+    PolygonalMesh net_mesh;
+    net_mesh.loadFile("net.obj");
+    Body::Rigid net_body(MassProperties(1.0, Vec3(0.0), Inertia(1.0)));
+    // net_body.addDecoration(Transform(), DecorativeMesh(
 
     // mass distributed lines + point mass bar
     double lines_bar_com = -(lines_mass * lines_length/2.0 + bar_mass*lines_length)/(lines_mass+bar_mass);
@@ -33,11 +45,11 @@ int main(int argc, char *argv[]) {
 
     double lower_arms_length = 0.3, lower_arms_radius = 0.04;
     double upper_arms_length = 0.3, upper_arms_radius = 0.05;
-    double torso_length = 0.5, torso_width = 0.3, torso_depth = 0.2;
-    double head_radius = 0.1;
-    double neck_length = 0.06;
-    double upper_legs_length = 0.45, upper_legs_radius = 0.08;
-    double lower_legs_length = 0.45, lower_legs_radius = 0.06;
+    double torso_length = 0.576, torso_width = 0.384, torso_depth = 0.1536;
+    double head_radius = 0.12;
+    double neck_length = 0.03;
+    double upper_legs_length = 0.52, upper_legs_radius = 0.08;
+    double lower_legs_length = 0.48, lower_legs_radius = 0.06;
 
     // mass distributed lower arms
     double lower_arms_mass = 2.0 * body_density * lower_arms_length * M_PI * lower_arms_radius * lower_arms_radius;
@@ -94,9 +106,11 @@ int main(int argc, char *argv[]) {
     lower_legs_body.addDecoration(Transform(Vec3(0.0,-lower_legs_length/2.0, torso_width/2.0-upper_legs_radius)), 
                                   DecorativeCylinder(lower_legs_radius, lower_legs_length/2.0));
 
+    printf("flyer height %f arms %f\n", lower_legs_length+upper_legs_length+torso_length+neck_length+head_radius*2, 
+        upper_arms_length+lower_arms_length);
     printf("total mass %f\n", lower_arms_mass+upper_arms_mass+torso_mass+head_mass+upper_legs_mass+lower_legs_mass);
 
-    MobilizedBody::Pin lines_bar(matter.Ground(), Transform(Vec3(0.0, anchor_height, 0.0)),
+    MobilizedBody::Pin lines_bar(matter.Ground(), Transform(Vec3(0.0, fly_crane_height, 0.0)),
         lines_bar_body, Transform(Vec3(0, 0, 0)));
     MobilizedBody::Pin lower_arms(lines_bar, Transform(Vec3(0,-lines_length,0.0)),
         lower_arms_body, Transform(Vec3(0, 0, 0)));
@@ -109,8 +123,8 @@ int main(int argc, char *argv[]) {
     MobilizedBody::Pin lower_legs(upper_legs, Transform(Vec3(0,-upper_legs_length,0.0)),
         lower_legs_body, Transform(Vec3(0, 0, 0)));
 
-    double damping=1000.0;
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper lines_anchor_damper(forces, lines_bar, MobilizerUIndex(0), damping);
+    double damping=200.0;
+    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper lines_fly_crane_damper(forces, lines_bar, MobilizerUIndex(0), 20.0);
     SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hands_damper(forces, lower_arms, MobilizerUIndex(0), damping);
     SimTK::Force::MobilityLinearDamper::MobilityLinearDamper elbows_damper(forces, upper_arms, MobilizerUIndex(0), damping);
     SimTK::Force::MobilityLinearDamper::MobilityLinearDamper shoulder_damper(forces, torso_head, MobilizerUIndex(0), damping);
