@@ -138,6 +138,9 @@ int main(int argc, char *argv[]) {
 
     // Set up visualization.
     Visualizer viz(system);
+    viz.setCameraTransform(Transform(Rotation(14.0*M_PI/180.0,CoordinateAxis(0)),Vec3(0.0, 3.0, 10.0)));
+    viz.setCameraFieldOfView(0.8);
+
     viz.setMode(SimTK::Visualizer::RealTime);
     system.addEventReporter(new Visualizer::Reporter(viz, dt));
 
