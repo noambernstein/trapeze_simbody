@@ -3,10 +3,23 @@
 #include <chrono>
 #include <stdio.h>
 #include <unistd.h>
+#include <string>
 using namespace SimTK;
 using namespace std::chrono;
 
 int main(int argc, char *argv[]) {
+    double slow_mo_rate = 1.0;
+    for (int i=1; i < argc; i++) {
+        if (std::string("--slow").compare(argv[i]) == 0) {
+            if (i < argc-1) {
+                slow_mo_rate = std::stod(argv[i+1]);
+            } else{
+                std::cerr << "got --slow but no following argument" << std::endl;
+                std::exit(1);
+            }
+        }
+    }
+
     // Create the system.
     MultibodySystem system;
     SimbodyMatterSubsystem matter(system);
@@ -41,7 +54,6 @@ int main(int argc, char *argv[]) {
     // mass distributed lines + point mass bar
     double lines_bar_com = -(lines_mass * lines_length/2.0 + bar_mass*lines_length)/(lines_mass+bar_mass);
     double lines_bar_inertia = (lines_mass/lines_length) * pow(lines_length,3)/3.0 + bar_mass * pow(lines_length,3)/3.0;
-    // printf("%f %f\n", lines_bar_com, lines_bar_inertia);
     Body::Rigid lines_bar_body(MassProperties(lines_mass+bar_mass, Vec3(0.0, lines_bar_com, 0.0), Inertia(lines_bar_inertia)));
     lines_bar_body.addDecoration(Transform(), DecorativeLine(Vec3(0.0, 0.0, -bar_length/2.0), Vec3(0.0, -lines_length, -bar_length/2.0)));
     lines_bar_body.addDecoration(Transform(), DecorativeLine(Vec3(0.0, 0.0,  bar_length/2.0), Vec3(0.0, -lines_length,  bar_length/2.0)));
@@ -113,9 +125,9 @@ int main(int argc, char *argv[]) {
     lower_legs_body.addDecoration(Transform(Vec3(0.0,-lower_legs_length/2.0, torso_width/2.0-upper_legs_radius)), 
                                   DecorativeCylinder(lower_legs_radius, lower_legs_length/2.0));
 
-    printf("flyer height %f arms %f\n", lower_legs_length+upper_legs_length+torso_length+neck_length+head_radius*2, 
-        upper_arms_length+lower_arms_length);
-    printf("total mass %f\n", lower_arms_mass+upper_arms_mass+torso_mass+head_mass+upper_legs_mass+lower_legs_mass);
+    std::cout << "flyer height " <<lower_legs_length+upper_legs_length+torso_length+neck_length+head_radius*2 << 
+        " arms " << upper_arms_length+lower_arms_length << std::endl;
+    std::cout << "total mass " << lower_arms_mass+upper_arms_mass+torso_mass+head_mass+upper_legs_mass+lower_legs_mass << std::endl;
 
     MobilizedBody::Pin lines_bar(matter.Ground(), Transform(Vec3(0.0, fly_crane_height, 0.0)),
         lines_bar_body, Transform(Vec3(0, 0, 0)));
@@ -157,34 +169,24 @@ int main(int argc, char *argv[]) {
 
     // Set up visualization.
     Visualizer viz(system);
+    // camera
     viz.setCameraTransform(Transform(Rotation(14.0*M_PI/180.0,CoordinateAxis(0)),Vec3(0.0, 3.0, 10.0)));
     viz.setCameraFieldOfView(0.8);
-
+    // real time, slow-mo if needed
     viz.setMode(SimTK::Visualizer::RealTime);
-    // slo-mo
-    // fps *= 0.01;
-    viz.setRealTimeScale(0.1);
-    //
+    viz.setRealTimeScale(slow_mo_rate);
+
     system.addEventReporter(new Visualizer::Reporter(viz, dt));
 
     // Initialize the system and state.
     system.realizeTopology ();
     State state = system.getDefaultState();
 
-    // lines_bar.setRate(state, 1.0);
-    // lower_arms.setRate(state, 5.0);
-    // upper_arms.setRate(state, -5.0);
-    // lower_arms.setAngle(state, 45.0*M_PI/180.0);
-
+    // set initial position
     lines_bar.setAngle(state, 45.0*M_PI/180.0);
     lower_arms.setAngle(state, 45.0*M_PI/180.0);
     torso_head.setAngle(state, -110.0*M_PI/180.0);
-    // torso_head.setRate(state, 10.0);
-
-    // upper_arms.setAngle(state, 5.0*M_PI/180.0);
-    // upper_arms.setRate(state, 2.0);
-
-
+    lines_bar.setRate(state, 0.3);
 
     // Simulate it.
     RungeKuttaMersonIntegrator integ(system);
