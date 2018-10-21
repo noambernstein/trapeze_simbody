@@ -130,13 +130,13 @@ int main(int argc, char *argv[]) {
     MobilizedBody::Pin lower_legs(upper_legs, Transform(Vec3(0,-upper_legs_length,0.0)),
         lower_legs_body, Transform(Vec3(0, 0, 0)));
 
-    double damping=50.0;
-    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper lines_fly_crane_damper(forces, lines_bar, MobilizerUIndex(0), 100.0);
-    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hands_damper(forces, lower_arms, MobilizerUIndex(0), damping);
-    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper elbows_damper(forces, upper_arms, MobilizerUIndex(0), damping);
-    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper shoulder_damper(forces, torso_head, MobilizerUIndex(0), damping);
-    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hips_damper(forces, upper_legs, MobilizerUIndex(0), damping);
-    // SimTK::Force::MobilityLinearDamper::MobilityLinearDamper knees_damper(forces, lower_legs, MobilizerUIndex(0), damping);
+    double joint_damping=10.0;
+    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper lines_fly_crane_damper(forces, lines_bar, MobilizerUIndex(0), 100.0);
+    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hands_damper(forces, lower_arms, MobilizerUIndex(0), joint_damping);
+    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper elbows_damper(forces, upper_arms, MobilizerUIndex(0), joint_damping);
+    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper shoulder_damper(forces, torso_head, MobilizerUIndex(0), joint_damping);
+    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hips_damper(forces, upper_legs, MobilizerUIndex(0), joint_damping);
+    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper knees_damper(forces, lower_legs, MobilizerUIndex(0), joint_damping);
 
     double fix_anchor=1.0, fix_hands=1.0, fix_elbows=1.0, fix_shoulders=1.0, fix_hips=1.0, fix_knees=1.0;
     SimTK::Force::MobilityLinearStop::MobilityLinearStop anchor_stop(forces, lines_bar, MobilizerQIndex(0), 
@@ -162,26 +162,27 @@ int main(int argc, char *argv[]) {
 
     viz.setMode(SimTK::Visualizer::RealTime);
     // slo-mo
-    fps *= 0.01;
-    viz.setRealTimeScale(0.01);
+    // fps *= 0.01;
+    viz.setRealTimeScale(0.1);
     //
     system.addEventReporter(new Visualizer::Reporter(viz, dt));
 
     // Initialize the system and state.
     system.realizeTopology ();
     State state = system.getDefaultState();
+
     // lines_bar.setRate(state, 1.0);
     // lower_arms.setRate(state, 5.0);
     // upper_arms.setRate(state, -5.0);
     // lower_arms.setAngle(state, 45.0*M_PI/180.0);
 
-    // lines_bar.setAngle(state, 45.0*M_PI/180.0);
-
-    // torso_head.setAngle(state, -110.0*M_PI/180.0);
+    lines_bar.setAngle(state, 45.0*M_PI/180.0);
+    lower_arms.setAngle(state, 45.0*M_PI/180.0);
+    torso_head.setAngle(state, -110.0*M_PI/180.0);
     // torso_head.setRate(state, 10.0);
 
-    upper_arms.setAngle(state, 45.0*M_PI/180.0);
-    upper_arms.setRate(state, 50.0);
+    // upper_arms.setAngle(state, 5.0*M_PI/180.0);
+    // upper_arms.setRate(state, 2.0);
 
 
 
