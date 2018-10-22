@@ -90,6 +90,88 @@ void set_joint_state(State *state, double *pos, double *vel, std::vector<Mobiliz
     }
 }
 
+// This is a custom InputListener. We'll register it prior to the InputSilo so
+// that we can intercept all input and say something about it. No input processing
+// is done here other than that, and we pass on everything we receive down the
+// chain to the next listener (which will be an InputSilo in this case).
+class MyListener : public Visualizer::InputListener {
+public:
+    MyListener() {}
+
+    ~MyListener() {}
+
+    virtual bool keyPressed(unsigned key, unsigned modifier) override {
+        String mod;
+        if (modifier&ControlIsDown) mod += "CTRL ";
+        if (modifier&ShiftIsDown) mod += "SHIFT ";
+        if (modifier&AltIsDown)  mod += "ALT ";
+
+        const char* nm = "NoNickname";
+        switch(key) {
+        case KeyEsc: nm="ESC"; break;
+        case KeyDelete: nm="DEL"; break;
+        case KeyRightArrow: nm="Right"; break;
+        case KeyLeftArrow: nm="Left"; break;
+        case KeyUpArrow: nm="Up"; break;
+        case KeyDownArrow: nm="Down"; break;
+        case KeyEnter: nm="ENTER"; break;
+        case KeyF1: nm="F1"; break;
+        case KeyF12: nm="F12"; break;
+        case 'a': nm="lower a"; break;
+        case 'Z': nm="upper Z"; break;
+        case '}': nm="right brace"; break;
+        }
+        if (modifier&IsSpecialKey)
+            std::cout << "Listener saw special key hit: " 
+                << mod << " key=" << key << " glut=" << (key & ~SpecialKeyOffset);
+        else
+            std::cout << "Listener saw ordinary key hit: " 
+                << mod << char(key) << " (" << (int)key << ")";
+        std::cout << " " << nm << std::endl;
+
+        return false; // key passed on
+    }
+
+    virtual bool sliderMoved(int whichSlider, Real value) override {
+        printf("Listener sees slider %d now at %g\n", whichSlider, value);
+        return false;   // slider move passed on
+    }
+
+};
+
+// This is a periodic event handler that interrupts the simulation on a regular
+// basis to poll the InputSilo for user input. If there has been some, process it.
+class UserInputHandler : public PeriodicEventHandler {
+public:
+    UserInputHandler(Visualizer& viz,
+                     Visualizer::InputSilo& silo, 
+                     Real interval) 
+    :   PeriodicEventHandler(interval), m_viz(viz), m_silo(silo) {}
+
+    virtual void handleEvent(State& state, Real accuracy,
+                             bool& shouldTerminate) const override 
+    {
+        while (m_silo.isAnyUserInput()) {
+            unsigned key, modifiers;
+
+            while (m_silo.takeKeyHit(key,modifiers)) {
+                if (key == Visualizer::InputListener::KeyEsc) {
+                    printf("User hit ESC!!\n");
+                    shouldTerminate = true;
+                    m_silo.clear();
+                    return;
+                }
+                printf("Handler sees key=%u, modifiers=%u\n",key,modifiers);
+            }
+
+        }  
+    }
+
+private:
+    Visualizer&            m_viz;
+    Visualizer::InputSilo& m_silo;
+};
+
 int main(int argc, char *argv[]) {
     double slow_mo_rate;
     std::string rig_filename, flyer_filename, initial_state_filename;
@@ -266,6 +348,14 @@ int main(int argc, char *argv[]) {
     viz.setRealTimeScale(slow_mo_rate);
 
     system.addEventReporter(new Visualizer::Reporter(viz, dt));
+
+    // from ChainExample.cpp
+    MyListener*            listener = new MyListener();
+    Visualizer::InputSilo* silo = new Visualizer::InputSilo();
+    viz.addInputListener(listener); // order matters here
+    viz.addInputListener(silo);
+    system.addEventHandler
+       (new UserInputHandler(viz,*silo, Real(0.01))); // check input every 10ms
 
     // Initialize the system and state.
     system.realizeTopology ();
