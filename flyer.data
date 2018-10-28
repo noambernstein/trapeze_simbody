@@ -1,4 +1,5 @@
 body_density 1000.0
+
 lower_arms_length 0.3
 lower_arms_radius 0.04
 upper_arms_length 0.3
@@ -12,3 +13,31 @@ upper_legs_length 0.52
 upper_legs_radius 0.08
 lower_legs_length 0.48
 lower_legs_radius 0.06
+
+joint_damping 50.0
+
+joint_hold_stiffness 3000.0
+joint_hold_damping 1.0
+
+joint_range_stiffness 10000.0
+joint_range_damping 1.0
+
+hands_lower_limit -180.0
+hands_upper_limit 180.0
+hands_max_torque 0.0
+
+elbows_lower_limit 0.0
+elbows_upper_limit 160.0
+elbows_max_torque 50.0
+
+shoulders_lower_limit -160.0
+shoulders_upper_limit 5.0
+shoulders_max_torque 75.0
+
+hips_lower_limit -145.0
+hips_upper_limit 45.0
+hips_max_torque 150.0
+
+knees_lower_limit 0.0
+knees_upper_limit 150.0
+knees_max_torque 1.00.0

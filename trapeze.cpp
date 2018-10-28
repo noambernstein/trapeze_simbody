@@ -113,16 +113,49 @@ void read_sys_state(std::string filename, std::map<std::string,int> joint_index,
 
 }
 
+class Joints {
+public:
+    Joints () {}
+
+    Joints (std::map<std::string, std::pair<MobilizedBody *,double>> joint_map) {
+        int i = 0;
+        for (auto p : joint_map) {
+            index[p.first] = i;
+            names.push_back(p.first);
+            joints.push_back(p.second.first);
+            max_torque.push_back(p.second.second);
+            i++;
+        }
+    }
+
+    int size() {
+        return joints.size();
+    }
+
+    MobilizedBody::Pin *get_pin(std::string name) {
+        return get_pin(index[name]);
+    }
+
+    MobilizedBody::Pin *get_pin(int i) {
+        return static_cast<MobilizedBody::Pin *>(joints[i]);
+    }
+
+    std::vector<MobilizedBody *> joints;
+    std::vector<double> max_torque;
+    std::vector<std::string> names;
+    std::map<std::string, int> index;
+};
+
 void set_sys_state(State &state, double lines_pos, double lines_vel, std::map<std::string,double> &pos, std::map<std::string,double> &vel, 
-    MobilizedBody *lines, std::map<std::string,int> joint_index, std::vector<MobilizedBody *> joints) {
+    MobilizedBody *lines, Joints &joints) {
 
     static_cast<MobilizedBody::Pin *>(lines)->setAngle(state, lines_pos);
     static_cast<MobilizedBody::Pin *>(lines)->setRate(state, lines_vel);
     for (auto p : pos) {
-        static_cast<MobilizedBody::Pin *>(joints[joint_index[p.first]])->setAngle(state, pos[p.first]);
+        joints.get_pin(p.first)->setAngle(state, pos[p.first]);
     }
     for (auto p : vel) {
-        static_cast<MobilizedBody::Pin *>(joints[joint_index[p.first]])->setRate(state, vel[p.first]);
+        joints.get_pin(p.first)->setRate(state, vel[p.first]);
     }
 }
 
@@ -130,8 +163,8 @@ void set_sys_state(State &state, double lines_pos, double lines_vel, std::map<st
 
 class Pose {
 public:
-    Pose(std::string filename, std::map<std::string,int> joint_index, std::vector<MobilizedBody *> *joints, GeneralForceSubsystem &forces) :
-        n_joints(joint_index.size()), cur_pose(NULL), l_joints(joints) {
+    Pose(std::string filename, std::map<std::string, double> flyer_params, Joints &joints,  GeneralForceSubsystem &forces) :
+        n_joints(joints.size()), cur_pose(NULL), l_joints(&joints) {
 
         reached_pose.reserve(n_joints);
         prev_delta_angle.reserve(n_joints);
@@ -146,7 +179,8 @@ public:
         inFile.open(filename);
 
         std::string pose_label, pose_name, base_pose, joint_name;
-        double joint_angle, applied_torque;
+        double joint_angle;
+        std::string applied_torque;
         int n_joints_set;
         char key;
         while (inFile >> pose_label >> pose_name >> key >> n_joints_set >> base_pose) {
@@ -167,10 +201,10 @@ public:
             pose.reserve(2*n_joints);
 
             // never any control over anchor or hands"
-            pose[joint_index["lines_anchor"]*2+0] = 0.0;
-            pose[joint_index["lines_anchor"]*2+1] = 0.0;
-            pose[joint_index["hands"]*2+0] = 0.0;
-            pose[joint_index["hands"]*2+1] = 0.0;
+            pose[joints.index["lines_anchor"]*2+0] = 0.0;
+            pose[joints.index["lines_anchor"]*2+1] = 0.0;
+            pose[joints.index["hands"]*2+0] = 0.0;
+            pose[joints.index["hands"]*2+1] = 0.0;
             // copy base pose
             if (base_pose != "-") {
                 for (int i = 0; i < n_joints*2; i++) {
@@ -183,21 +217,23 @@ public:
             // set current pose
             for (int i = 0; i < n_joints_set; i++) {
                 inFile >> joint_name >> joint_angle >> applied_torque;
-                int joint_i = joint_index[joint_name];
+                int joint_i = joints.index[joint_name];
                 pose[joint_i*2+0] = joint_angle * M_PI / 180.0;
-                pose[joint_i*2+1] = applied_torque;
+                if (applied_torque == "-") {
+                    pose[joint_i*2+1] = -1.0;
+                } else {
+                    pose[joint_i*2+1] = std::stod(applied_torque);
+                }
             }
         }
 
         inFile.close();
 
         // create inactive actuators for pose hold (very large bounds) and pose torque (zero torque)
-        double joint_hold_stiffness = 1000.0;
-        double joint_hold_damping = 1.0;
         for (int i = 0; i < n_joints; i++) {
-            joint_hold_actuators.push_back(SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, *(*l_joints)[i], MobilizerQIndex(0), 
-                joint_hold_stiffness, joint_hold_damping, -INF_ANGLE, INF_ANGLE));
-            joint_torque_actuators.push_back(SimTK::Force::MobilityConstantForce::MobilityConstantForce(forces, *(*l_joints)[i], 0.0));
+            joint_hold_actuators.push_back(SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, *(l_joints->get_pin(i)), MobilizerQIndex(0), 
+                flyer_params["joint_hold_stiffness"], flyer_params["joint_hold_damping"], -INF_ANGLE, INF_ANGLE));
+            joint_torque_actuators.push_back(SimTK::Force::MobilityConstantForce::MobilityConstantForce(forces, *(l_joints->get_pin(i)), 0.0));
         }
     }
 
@@ -226,18 +262,24 @@ public:
         for (int i=0; i < n_joints; i++) {
             if (!reached_pose[i]) {
                 double pose_angle = (*cur_pose)[2*i+0];
-                double cur_delta_angle = static_cast<MobilizedBody::Pin *>((*l_joints)[i])->getAngle(state) - pose_angle;
+                double cur_delta_angle = l_joints->get_pin(i)->getAngle(state) - pose_angle;
                 if (std::abs(cur_delta_angle) < 0.001 || cur_delta_angle*prev_delta_angle[i] < 0.0) {
-                    // reached pose
+                    // just reached (or passed) pose, disable torque, enable hold
                     reached_pose[i] = 1;
-                    // disable torque
                     joint_torque_actuators[i].setForce(state, 0.0);
-                    // enable hold
                     joint_hold_actuators[i].setBounds(state, pose_angle-0.001, pose_angle+0.001);
+                    std::cerr << "set_forces reached pose for joint "<<l_joints->names[i]<<" disable torque enable hold\n";
                 } else if (prev_delta_angle[i] == 0.0) {
-                    // first time for this pose, enable torque, disable hold
+                    // first time for this pose, disable hold, enable torque
                     joint_hold_actuators[i].setBounds(state, -INF_ANGLE, INF_ANGLE);
-                    joint_torque_actuators[i].setForce(state, (*cur_pose)[2*i+1]*(cur_delta_angle < 0.0 ? 1.0 : -1.0));
+                    double applied_torque;
+                    if ((*cur_pose)[2*i+1] >= 0.0) {
+                        applied_torque = (*cur_pose)[2*i+1];
+                    } else {
+                        applied_torque = l_joints->max_torque[i];
+                    }
+                    joint_torque_actuators[i].setForce(state, applied_torque*(cur_delta_angle < 0.0 ? 1.0 : -1.0));
+                    std::cerr << "set_forces first time trying pose for joint "<<l_joints->names[i]<<" disable hold enable torque "<< applied_torque<<std::endl;
                 }
                 prev_delta_angle[i] = cur_delta_angle;
             }
@@ -252,9 +294,8 @@ private:
     std::vector<SimTK::Force::MobilityLinearStop::MobilityLinearStop> joint_hold_actuators;
     std::vector<SimTK::Force::MobilityConstantForce::MobilityConstantForce> joint_torque_actuators;
     std::map<std::string,std::vector<double> > poses;
-    std::vector<MobilizedBody *> *l_joints;
+    Joints *l_joints;
     std::map<unsigned,std::string> keymap;
-
 };
 
 // This is a custom InputListener. We'll register it prior to the InputSilo so
@@ -405,12 +446,13 @@ void create_rig(MobilizedBody &ground, std::map<std::string, double> &rig_params
 typedef struct {
     Body::Rigid lower_arms, upper_arms, torso_head, upper_legs, lower_legs;
     MobilizedBody hands, elbows, shoulders, hips, knees;
+    double hands_max_torque, elbows_max_torque, shoulders_max_torque, hips_max_torque, knees_max_torque;
     SimTK::Force::MobilityLinearDamper hands_damper, elbows_damper, shoulders_damper, hips_damper, knees_damper;
     SimTK::Force::MobilityLinearStop hands_range_limit, elbows_range_limit, shoulders_range_limit, hips_range_limit, knees_range_limit;
 } Flyer;
 
 void create_flyer(MobilizedBody lines_anchor, double lines_length, std::map<std::string, double> &flyer_params,
-    GeneralForceSubsystem &forces, std::vector<MobilizedBody *> &joints, std::map<std::string,int> &joint_index, Flyer &flyer) {
+    GeneralForceSubsystem &forces, Joints &joints, Flyer &flyer) {
     // mass distributed lower arms
     double lower_arms_mass = 2.0 * flyer_params["body_density"] * flyer_params["lower_arms_length"] * 
         M_PI * flyer_params["lower_arms_radius"] * flyer_params["lower_arms_radius"];
@@ -476,7 +518,6 @@ void create_flyer(MobilizedBody lines_anchor, double lines_length, std::map<std:
         " arms " << flyer_params["upper_arms_length"]+flyer_params["lower_arms_length"] << std::endl;
     std::cout << "total mass " << lower_arms_mass+upper_arms_mass+torso_mass+head_mass+upper_legs_mass+lower_legs_mass << std::endl;
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
     // Yes, Pin is a mobilized body, but really it behaves like the hinge, so name it after the hinge bodypart
     flyer.hands = MobilizedBody::Pin (lines_anchor, Transform(Vec3(0,-lines_length,0.0)),
         flyer.lower_arms, Transform(Vec3(0, 0, 0)));
@@ -489,42 +530,41 @@ void create_flyer(MobilizedBody lines_anchor, double lines_length, std::map<std:
     flyer.knees = MobilizedBody::Pin(flyer.hips, Transform(Vec3(0,-flyer_params["upper_legs_length"],0.0)),
         flyer.lower_legs, Transform(Vec3(0, 0, 0)));
 
-    joints.push_back(&flyer.hands);
-    joints.push_back(&flyer.elbows);
-    joints.push_back(&flyer.shoulders);
-    joints.push_back(&flyer.hips);
-    joints.push_back(&flyer.knees);
-    joint_index[std::string("hands")] = 0;
-    joint_index[std::string("elbows")] = 1;
-    joint_index[std::string("shoulders")] = 2;
-    joint_index[std::string("hips")] = 3;
-    joint_index[std::string("knees")] = 4;
-////////////////////////////////////////////////////////////////////////////////////////////////////
+    typedef std::pair<MobilizedBody *,double> JointTorque;
+    std::map<std::string,JointTorque> joint_map;
+    joint_map["hands"] = JointTorque(&flyer.hands,flyer_params["hands_max_torque"]);
+    joint_map["elbows"] = JointTorque(&flyer.elbows,flyer_params["elbows_max_torque"]);
+    joint_map["shoulders"] = JointTorque(&flyer.shoulders,flyer_params["shoulders_max_torque"]);
+    joint_map["hips"] = JointTorque(&flyer.hips,flyer_params["hips_max_torque"]);
+    joint_map["knees"] = JointTorque(&flyer.knees,flyer_params["knees_max_torque"]);
+    joints = Joints(joint_map);
 
     // damping in all joints
-    double joint_damping=50.0;
-    flyer.hands_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.hands, MobilizerUIndex(0), joint_damping);
-    flyer.elbows_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.elbows, MobilizerUIndex(0), joint_damping);
-    flyer.shoulders_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.shoulders, MobilizerUIndex(0), joint_damping);
-    flyer.hips_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.hips, MobilizerUIndex(0), joint_damping);
-    flyer.knees_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.knees, MobilizerUIndex(0), joint_damping);
+    flyer.hands_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.hands, MobilizerUIndex(0), flyer_params["joint_damping"]);
+    flyer.elbows_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.elbows, MobilizerUIndex(0), flyer_params["joint_damping"]);
+    flyer.shoulders_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.shoulders, MobilizerUIndex(0), flyer_params["joint_damping"]);
+    flyer.hips_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.hips, MobilizerUIndex(0), flyer_params["joint_damping"]);
+    flyer.knees_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.knees, MobilizerUIndex(0), flyer_params["joint_damping"]);
 
     // range of motion of all joints
-    double mobile_anchor=1.0, mobile_hands=1.0, mobile_elbows=1.0, mobile_shoulders=1.0, mobile_hips=1.0, mobile_knees=1.0;
-    double joint_range_stiffness=10000.0, joint_range_damping=1.0;
+    double joint_range_damping = flyer_params["joint_range_damping"], joint_range_stiffness = flyer_params["joint_range_stiffness"];
     flyer.hands_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.hands, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, -mobile_hands*180.0*M_PI/180.0, mobile_hands*180.0*M_PI/180.0);
+        joint_range_stiffness, joint_range_damping, flyer_params["hands_lower_limit"]*M_PI/180.0, flyer_params["hands_upper_limit"]*M_PI/180.0);
     flyer.elbows_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.elbows, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, mobile_elbows*0.0*M_PI/180.0, mobile_elbows*160.0*M_PI/180.0);
+        joint_range_stiffness, joint_range_damping, flyer_params["elbows_lower_limit"]*M_PI/180.0, flyer_params["elbows_upper_limit"]*M_PI/180.0);
     flyer.shoulders_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.shoulders, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, -mobile_shoulders*160.0*M_PI/180.0, mobile_shoulders*5.0*M_PI/180.0);
+        joint_range_stiffness, joint_range_damping, flyer_params["shoulders_lower_limit"]*M_PI/180.0, flyer_params["shoulders_upper_limit"]*M_PI/180.0);
     flyer.hips_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.hips, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, -mobile_hips*145.0*M_PI/180.0, mobile_hips*45.0*M_PI/180.0);
+        joint_range_stiffness, joint_range_damping, flyer_params["hips_lower_limit"]*M_PI/180.0, flyer_params["hips_upper_limit"]*M_PI/180.0);
     flyer.knees_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.knees, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, mobile_knees*0.0*M_PI/180.0, mobile_knees*150.0*M_PI/180.0);
+        joint_range_stiffness, joint_range_damping, flyer_params["knees_lower_limit"]*M_PI/180.0, flyer_params["knees_upper_limit"]*M_PI/180.0);
+
+    flyer.hands_max_torque = flyer_params["hands_max_torque"];
+    flyer.elbows_max_torque = flyer_params["elbows_max_torque"];
+    flyer.shoulders_max_torque = flyer_params["shoulders_max_torque"];
+    flyer.hips_max_torque = flyer_params["hips_max_torque"];
+    flyer.knees_max_torque = flyer_params["knees_max_torque"];
 }
-
-
 
 int main(int argc, char *argv[]) {
     double slow_mo_rate, gravity_accel;
@@ -553,16 +593,14 @@ int main(int argc, char *argv[]) {
     // create rigid bodies
     Flyer flyer;
 
-    std::vector<MobilizedBody *> joints;
-    std::map<std::string,int> joint_index;
-
-    create_flyer(rig.lines_mobile, rig_params["lines_length"], flyer_params, forces, joints, joint_index, flyer);
+    Joints joints;
+    create_flyer(rig.lines_mobile, rig_params["lines_length"], flyer_params, forces, joints, flyer);
 
     double fps = 120.0;
     double dt = 1.0/fps;
 
     // read poses before almost everything UI related (and before topology is realized)
-    Pose pose(poses_filename, joint_index, &joints, forces);
+    Pose pose(poses_filename, flyer_params, joints, forces);
 
     // Set up visualization.
     Visualizer viz(system);
@@ -593,8 +631,8 @@ int main(int argc, char *argv[]) {
     double initial_lines_pos, initial_lines_vel;
     std::map<std::string, double> initial_joint_pos, initial_joint_vel;
     std::string initial_pose_name;
-    read_sys_state(initial_state_filename, joint_index, initial_lines_pos, initial_lines_vel, initial_joint_pos, initial_joint_vel, initial_pose_name);
-    set_sys_state(state, initial_lines_pos, initial_lines_vel, initial_joint_pos, initial_joint_vel, &rig.lines_mobile, joint_index, joints);
+    read_sys_state(initial_state_filename, joints.index, initial_lines_pos, initial_lines_vel, initial_joint_pos, initial_joint_vel, initial_pose_name);
+    set_sys_state(state, initial_lines_pos, initial_lines_vel, initial_joint_pos, initial_joint_vel, &rig.lines_mobile, joints);
     pose.set_pose(initial_pose_name);
 
     // Simulate it.
