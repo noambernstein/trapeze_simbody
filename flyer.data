@@ -16,7 +16,7 @@ lower_legs_radius 0.06
 
 joint_damping 50.0
 
-joint_hold_stiffness 3000.0
+joint_hold_stiffness 10000.0
 joint_hold_damping 1.0
 
 joint_range_stiffness 10000.0
