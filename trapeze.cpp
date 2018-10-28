@@ -49,7 +49,7 @@ void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_ac
         *slow_mo_rate = 1.0/std::stod(args_map["--slow"]);
     }
     if (args_map.find("--gravity") == args_map.end()) {
-        *gravity_accel = 1.0;
+        *gravity_accel = 9.8;
     } else {
         *gravity_accel = std::stod(args_map["--gravity"]);
     }
