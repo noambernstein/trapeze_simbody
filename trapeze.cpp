@@ -211,7 +211,7 @@ public:
                     poses[pose_name][i] = poses[base_pose][i];
                 }
             } else if (n_joints_set != n_joints) {
-                std::cerr << "base_pose not set, n_joints_set = " << n_joints_set << " must equal n_joints - 2 = " << (n_joints) << std::endl;
+                std::cerr << "base_pose not set, n_joints_set = " << n_joints_set << " must equal n_joints = " << n_joints << std::endl;
                 exit(1);
             }
             // set current pose
@@ -248,6 +248,7 @@ public:
     }
 
     void set_pose(std::string pose_name) {
+        std::cerr << "set_pose doing "<< pose_name <<std::endl;
         cur_pose = &(poses[pose_name]);
         for (int i=0; i < n_joints; i++) {
             reached_pose[i] = 0;
@@ -263,12 +264,14 @@ public:
             if (!reached_pose[i]) {
                 double pose_angle = (*cur_pose)[2*i+0];
                 double cur_delta_angle = l_joints->get_pin(i)->getAngle(state) - pose_angle;
+                // std::cerr << state.getTime() << " check joint " << l_joints->names[i] << " angle " << l_joints->get_pin(i)->getAngle(state)*180.0/M_PI << " pose_angle " << pose_angle*180.0/M_PI << std::endl;
                 if (std::abs(cur_delta_angle) < 0.001 || cur_delta_angle*prev_delta_angle[i] < 0.0) {
                     // just reached (or passed) pose, disable torque, enable hold
                     reached_pose[i] = 1;
                     joint_torque_actuators[i].setForce(state, 0.0);
                     joint_hold_actuators[i].setBounds(state, pose_angle-0.001, pose_angle+0.001);
-                    std::cerr << "set_forces reached pose for joint "<<l_joints->names[i]<<" disable torque enable hold\n";
+                    // std::cerr << state.getTime() << " set_forces reached pose for joint "<<l_joints->names[i]<<" disable torque enable hold" <<  std::endl;
+                    // std::cerr << state.getTime() << "      reached criteria prev " << prev_delta_angle[i]*180.0/M_PI << " " << cur_delta_angle *180.0/M_PI << std::endl;
                 } else if (prev_delta_angle[i] == 0.0) {
                     // first time for this pose, disable hold, enable torque
                     joint_hold_actuators[i].setBounds(state, -INF_ANGLE, INF_ANGLE);
@@ -279,7 +282,7 @@ public:
                         applied_torque = l_joints->max_torque[i];
                     }
                     joint_torque_actuators[i].setForce(state, applied_torque*(cur_delta_angle < 0.0 ? 1.0 : -1.0));
-                    std::cerr << "set_forces first time trying pose for joint "<<l_joints->names[i]<<" disable hold enable torque "<< applied_torque<<std::endl;
+                    // std::cerr << state.getTime() << " set_forces first time trying pose for joint " << l_joints->names[i] << " disable hold enable torque " << applied_torque*(cur_delta_angle < 0.0 ? 1.0 : -1.0) << std::endl;
                 }
                 prev_delta_angle[i] = cur_delta_angle;
             }
@@ -309,44 +312,7 @@ public:
     ~MyListener() {}
 
     virtual bool keyPressed(unsigned key, unsigned modifier) override {
-        // String mod;
-        // if (modifier&ControlIsDown) mod += "CTRL ";
-        // if (modifier&ShiftIsDown) mod += "SHIFT ";
-        // if (modifier&AltIsDown)  mod += "ALT ";
-
         return (l_poses->do_keypress(key));
-
-        /*
-        const char* nm = "NoNickname";
-        switch(key) {
-        case KeyEsc: nm="ESC"; break;
-        case KeyDelete: nm="DEL"; break;
-        case KeyRightArrow: nm="Right"; break;
-        case KeyLeftArrow: nm="Left"; break;
-        case KeyUpArrow: nm="Up"; break;
-        case KeyDownArrow: nm="Down"; break;
-        case KeyEnter: nm="ENTER"; break;
-        case KeyF1: nm="F1"; break;
-        case KeyF12: nm="F12"; break;
-        case 'a': nm="lower a"; break;
-        case 'Z': nm="upper Z"; break;
-        case '}': nm="right brace"; break;
-        }
-        if (modifier&IsSpecialKey)
-            std::cout << "Listener saw special key hit: " 
-                << mod << " key=" << key << " glut=" << (key & ~SpecialKeyOffset);
-        else
-            std::cout << "Listener saw ordinary key hit: " 
-                << mod << char(key) << " (" << (int)key << ")";
-        std::cout << " " << nm << std::endl;
-        */
-
-        return false; // key passed on
-    }
-
-    virtual bool sliderMoved(int whichSlider, Real value) override {
-        printf("Listener sees slider %d now at %g\n", whichSlider, value);
-        return false;   // slider move passed on
     }
 
 private:
@@ -633,6 +599,7 @@ int main(int argc, char *argv[]) {
     std::string initial_pose_name;
     read_sys_state(initial_state_filename, joints.index, initial_lines_pos, initial_lines_vel, initial_joint_pos, initial_joint_vel, initial_pose_name);
     set_sys_state(state, initial_lines_pos, initial_lines_vel, initial_joint_pos, initial_joint_vel, &rig.lines_mobile, joints);
+    std::cerr << "initial system state setting pose " << initial_pose_name << std::endl;
     pose.set_pose(initial_pose_name);
 
     // Simulate it.
