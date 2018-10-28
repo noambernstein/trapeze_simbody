@@ -7,8 +7,6 @@
 #include <fstream>
 using namespace SimTK;
 
-#define N_JOINTS 6
-
 void read_map(std::string filename, std::map<std::string,double> &param_map) {
     std::ifstream inFile;
     inFile.open(filename);
@@ -76,30 +74,55 @@ void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_ac
 
 }
 
-void read_joint_state(std::string filename, std::map<std::string,int> joint_index, double *joint_pos, double *joint_vel) {
+void read_sys_state(std::string filename, std::map<std::string,int> joint_index, 
+    double &lines_pos, double &lines_vel, std::map<std::string,double> &joint_pos, std::map<std::string,double> &joint_vel,
+    std::string &pose_name) {
     std::ifstream inFile;
     std::string key, pos_value, vel_value;
 
     std::cout << "reading initial state from "<<filename<<std::endl;
 
-    for (int i=0; i < joint_index.size(); i++) {
-        joint_pos[i] = 0.0;
-        joint_vel[i] = 0.0;
+    lines_pos = 0;
+    lines_vel = 0;
+    for (auto p : joint_index) {
+        joint_pos[p.first] = 0.0;
+        joint_vel[p.first] = 0.0;
     }
 
     inFile.open(filename);
-    while (inFile >> key >> pos_value >> vel_value) {
-        joint_pos[joint_index[key]] = std::stod(pos_value)*M_PI/180.0;
-        joint_vel[joint_index[key]] = std::stod(vel_value)*M_PI/180.0;
+    while (inFile >> key) { 
+        std::cerr << "  reading key " << key << std::endl;
+        if (key == "POSE") { // initial pos
+            inFile >> pose_name;
+        } else { // joint pos vel
+            inFile >> pos_value >> vel_value;
+            if (key == "lines") {
+                lines_pos = std::stod(pos_value)*M_PI/180.0;
+                lines_vel = std::stod(vel_value)*M_PI/180.0;
+            } else {
+                if (joint_index.find(key) == joint_index.end()) {
+                    std::cerr << "system state key "<<key<<" not in joint_index" << std::endl;
+                    exit(1);
+                }
+                joint_pos[key] = std::stod(pos_value)*M_PI/180.0;
+                joint_vel[key] = std::stod(vel_value)*M_PI/180.0;
+            }
+        }
     }
     inFile.close();
 
 }
 
-void set_joint_state(State *state, double *pos, double *vel, std::vector<MobilizedBody::Pin *> joints) {
-    for (int i=0; i < joints.size(); i++) {
-        joints[i]->setAngle(*state, pos[i]);
-        joints[i]->setRate(*state, vel[i]);
+void set_sys_state(State &state, double lines_pos, double lines_vel, std::map<std::string,double> &pos, std::map<std::string,double> &vel, 
+    MobilizedBody *lines, std::map<std::string,int> joint_index, std::vector<MobilizedBody *> joints) {
+
+    static_cast<MobilizedBody::Pin *>(lines)->setAngle(state, lines_pos);
+    static_cast<MobilizedBody::Pin *>(lines)->setRate(state, lines_vel);
+    for (auto p : pos) {
+        static_cast<MobilizedBody::Pin *>(joints[joint_index[p.first]])->setAngle(state, pos[p.first]);
+    }
+    for (auto p : vel) {
+        static_cast<MobilizedBody::Pin *>(joints[joint_index[p.first]])->setRate(state, vel[p.first]);
     }
 }
 
@@ -107,7 +130,7 @@ void set_joint_state(State *state, double *pos, double *vel, std::vector<Mobiliz
 
 class Pose {
 public:
-    Pose(std::string filename, std::map<std::string,int> joint_index, std::vector<MobilizedBody::Pin *> *joints, GeneralForceSubsystem &forces) :
+    Pose(std::string filename, std::map<std::string,int> joint_index, std::vector<MobilizedBody *> *joints, GeneralForceSubsystem &forces) :
         n_joints(joint_index.size()), cur_pose(NULL), l_joints(joints) {
 
         reached_pose.reserve(n_joints);
@@ -123,7 +146,7 @@ public:
         inFile.open(filename);
 
         std::string pose_label, pose_name, base_pose, joint_name;
-        double joint_angle, max_torque;
+        double joint_angle, applied_torque;
         int n_joints_set;
         char key;
         while (inFile >> pose_label >> pose_name >> key >> n_joints_set >> base_pose) {
@@ -153,28 +176,28 @@ public:
                 for (int i = 0; i < n_joints*2; i++) {
                     poses[pose_name][i] = poses[base_pose][i];
                 }
-            } else if (n_joints_set != n_joints-2) {
-                std::cerr << "base_pose not set, n_joints_set = " << n_joints_set << " must equal n_joints - 2 = " << (n_joints-2) << std::endl;
+            } else if (n_joints_set != n_joints) {
+                std::cerr << "base_pose not set, n_joints_set = " << n_joints_set << " must equal n_joints - 2 = " << (n_joints) << std::endl;
                 exit(1);
             }
             // set current pose
             for (int i = 0; i < n_joints_set; i++) {
-                inFile >> joint_name >> joint_angle >> max_torque;
+                inFile >> joint_name >> joint_angle >> applied_torque;
                 int joint_i = joint_index[joint_name];
                 pose[joint_i*2+0] = joint_angle * M_PI / 180.0;
-                pose[joint_i*2+1] = max_torque;
+                pose[joint_i*2+1] = applied_torque;
             }
         }
 
         inFile.close();
 
         // create inactive actuators for pose hold (very large bounds) and pose torque (zero torque)
-        double joint_hold_stiffness = 10000.0;
+        double joint_hold_stiffness = 1000.0;
         double joint_hold_damping = 1.0;
-        for (int i = 2; i < n_joints; i++) {
-            joint_hold_actuators.push_back(SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, *(*joints)[i], MobilizerQIndex(0), 
+        for (int i = 0; i < n_joints; i++) {
+            joint_hold_actuators.push_back(SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, *(*l_joints)[i], MobilizerQIndex(0), 
                 joint_hold_stiffness, joint_hold_damping, -INF_ANGLE, INF_ANGLE));
-            joint_torque_actuators.push_back(SimTK::Force::MobilityConstantForce::MobilityConstantForce(forces, *(*joints)[i], 0.0));
+            joint_torque_actuators.push_back(SimTK::Force::MobilityConstantForce::MobilityConstantForce(forces, *(*l_joints)[i], 0.0));
         }
     }
 
@@ -190,8 +213,7 @@ public:
 
     void set_pose(std::string pose_name) {
         cur_pose = &(poses[pose_name]);
-        std::cerr << "set_pose set cur_pos = "<<cur_pose<<std::endl;
-        for (int i=2; i < n_joints; i++) {
+        for (int i=0; i < n_joints; i++) {
             reached_pose[i] = 0;
             prev_delta_angle[i] = 0.0;
         }
@@ -201,22 +223,21 @@ public:
         if (cur_pose == NULL) {
             return;
         }
-        for (int i=2; i < n_joints; i++) {
+        for (int i=0; i < n_joints; i++) {
             if (!reached_pose[i]) {
                 double pose_angle = (*cur_pose)[2*i+0];
-                double cur_delta_angle = (*l_joints)[i]->getAngle(state) - pose_angle;
+                double cur_delta_angle = static_cast<MobilizedBody::Pin *>((*l_joints)[i])->getAngle(state) - pose_angle;
                 if (std::abs(cur_delta_angle) < 0.001 || cur_delta_angle*prev_delta_angle[i] < 0.0) {
                     // reached pose
                     reached_pose[i] = 1;
                     // disable torque
-                    joint_torque_actuators[i-2].setForce(state, 0.0);
+                    joint_torque_actuators[i].setForce(state, 0.0);
                     // enable hold
-                    joint_hold_actuators[i-2].setBounds(state, pose_angle-0.001, pose_angle+0.001);
+                    joint_hold_actuators[i].setBounds(state, pose_angle-0.001, pose_angle+0.001);
                 } else if (prev_delta_angle[i] == 0.0) {
                     // first time for this pose, enable torque, disable hold
-                    std::cerr << "set_forces setting torque "<<(*cur_pose)[2*i+1]*(cur_delta_angle < 0.0 ? 1.0 : -1.0)<<std::endl;
-                    joint_hold_actuators[i-2].setBounds(state, -INF_ANGLE, INF_ANGLE);
-                    joint_torque_actuators[i-2].setForce(state, (*cur_pose)[2*i+1]*(cur_delta_angle < 0.0 ? 1.0 : -1.0));
+                    joint_hold_actuators[i].setBounds(state, -INF_ANGLE, INF_ANGLE);
+                    joint_torque_actuators[i].setForce(state, (*cur_pose)[2*i+1]*(cur_delta_angle < 0.0 ? 1.0 : -1.0));
                 }
                 prev_delta_angle[i] = cur_delta_angle;
             }
@@ -231,7 +252,7 @@ private:
     std::vector<SimTK::Force::MobilityLinearStop::MobilityLinearStop> joint_hold_actuators;
     std::vector<SimTK::Force::MobilityConstantForce::MobilityConstantForce> joint_torque_actuators;
     std::map<std::string,std::vector<double> > poses;
-    std::vector<MobilizedBody::Pin *> *l_joints;
+    std::vector<MobilizedBody *> *l_joints;
     std::map<unsigned,std::string> keymap;
 
 };
@@ -337,6 +358,174 @@ private:
     Visualizer::InputSilo& m_silo;
 };
 
+typedef struct {
+    Body::Rigid fly_crane, lines_bar, net;
+    MobilizedBody fly_crane_anchor, net_anchor, lines_mobile;
+    SimTK::Force::MobilityLinearDamper lines_fly_crane_damper;
+} Rig;
+
+void create_rig(MobilizedBody &ground, std::map<std::string, double> &rig_params, GeneralForceSubsystem &forces, Rig &rig) {
+    rig.fly_crane = Body::Rigid(MassProperties(1.0, Vec3(0.0), Inertia(1.0)));
+    rig.fly_crane.addDecoration(Transform(), DecorativeBrick(Vec3(rig_params["fly_crane_thickness"]/2.0,
+        rig_params["fly_crane_thickness"]/2.0,rig_params["fly_crane_width"])));
+    rig.fly_crane_anchor = MobilizedBody::Pin(ground, Transform(Vec3(0.0, rig_params["fly_crane_height"]+rig_params["fly_crane_thickness"]/2.0, 0.0)),
+        rig.fly_crane, Transform(Vec3(0, 0, 0)));
+
+    PolygonalMesh net_mesh;
+    net_mesh.loadFile("net.obj");
+    rig.net = Body::Rigid(MassProperties(1.0, Vec3(0.0), Inertia(1.0)));
+    DecorativeMesh net_mesh_decor(net_mesh);
+    net_mesh_decor.setRepresentation(DecorativeGeometry::DrawWireframe);
+    net_mesh_decor.setLineThickness(2.0);
+    net_mesh_decor.setColor(Vec3(1.0, 1.0, 1.0));
+    rig.net.addDecoration(Transform(), net_mesh_decor);
+    rig.net_anchor = MobilizedBody::Pin(ground, Transform(Vec3(rig_params["net_offset"], rig_params["net_height"], 0.0)),
+        rig.net, Transform(Vec3(0, 0, 0)));
+
+    // mass distributed lines + point mass bar
+    double lines_bar_com = -(rig_params["lines_mass"] * rig_params["lines_length"]/2.0 + 
+                             rig_params["bar_mass"]*rig_params["lines_length"])/(rig_params["lines_mass"]+rig_params["bar_mass"]);
+    double lines_bar_inertia = (rig_params["lines_mass"]/rig_params["lines_length"]) * pow(rig_params["lines_length"],3)/3.0 + 
+                                rig_params["bar_mass"] * pow(rig_params["lines_length"],3)/3.0;
+    rig.lines_bar = Body::Rigid(MassProperties(rig_params["lines_mass"]+rig_params["bar_mass"], Vec3(0.0, lines_bar_com, 0.0), 
+        Inertia(lines_bar_inertia)));
+    rig.lines_bar.addDecoration(Transform(), DecorativeLine(Vec3(0.0, 0.0, -rig_params["bar_length"]/2.0), 
+        Vec3(0.0, -rig_params["lines_length"], -rig_params["bar_length"]/2.0)));
+    rig.lines_bar.addDecoration(Transform(), DecorativeLine(Vec3(0.0, 0.0,  rig_params["bar_length"]/2.0), 
+        Vec3(0.0, -rig_params["lines_length"],  rig_params["bar_length"]/2.0)));
+    rig.lines_bar.addDecoration(Transform(Rotation(90.0*M_PI/180.0,CoordinateAxis(2)),Vec3(0.0, -rig_params["lines_length"], 0.0)), 
+                                 DecorativeCylinder(rig_params["bar_radius"], rig_params["bar_length"]/2.0));
+
+    rig.lines_mobile = MobilizedBody::Pin(ground, Transform(Vec3(0.0, rig_params["fly_crane_height"], 0.0)),
+        rig.lines_bar, Transform(Vec3(0, 0, 0)));
+
+    rig.lines_fly_crane_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, rig.lines_mobile, MobilizerUIndex(0), 100.0);
+}
+
+typedef struct {
+    Body::Rigid lower_arms, upper_arms, torso_head, upper_legs, lower_legs;
+    MobilizedBody hands, elbows, shoulders, hips, knees;
+    SimTK::Force::MobilityLinearDamper hands_damper, elbows_damper, shoulders_damper, hips_damper, knees_damper;
+    SimTK::Force::MobilityLinearStop hands_range_limit, elbows_range_limit, shoulders_range_limit, hips_range_limit, knees_range_limit;
+} Flyer;
+
+void create_flyer(MobilizedBody lines_anchor, double lines_length, std::map<std::string, double> &flyer_params,
+    GeneralForceSubsystem &forces, std::vector<MobilizedBody *> &joints, std::map<std::string,int> &joint_index, Flyer &flyer) {
+    // mass distributed lower arms
+    double lower_arms_mass = 2.0 * flyer_params["body_density"] * flyer_params["lower_arms_length"] * 
+        M_PI * flyer_params["lower_arms_radius"] * flyer_params["lower_arms_radius"];
+    double lower_arms_com = -flyer_params["lower_arms_length"] / 2.0;
+    double lower_arms_inertia = lower_arms_mass / flyer_params["lower_arms_length"] * pow(flyer_params["lower_arms_length"],3)/3.0;
+    flyer.lower_arms = Body::Rigid(MassProperties(lower_arms_mass, Vec3(0.0, lower_arms_com, 0.0), Inertia(lower_arms_inertia)));
+    flyer.lower_arms.addDecoration(Transform(Vec3(0.0,-flyer_params["lower_arms_length"]/2.0, -flyer_params["torso_width"]/2.0-flyer_params["upper_arms_radius"])), 
+                                  DecorativeCylinder(flyer_params["lower_arms_radius"], flyer_params["lower_arms_length"]/2.0));
+    flyer.lower_arms.addDecoration(Transform(Vec3(0.0,-flyer_params["lower_arms_length"]/2.0, flyer_params["torso_width"]/2.0+flyer_params["upper_arms_radius"])), 
+                                  DecorativeCylinder(flyer_params["lower_arms_radius"], flyer_params["lower_arms_length"]/2.0));
+
+    // mass distributed upper arms
+    double upper_arms_mass = 2.0 * flyer_params["body_density"] * flyer_params["upper_arms_length"] * 
+        M_PI * flyer_params["upper_arms_radius"] * flyer_params["upper_arms_radius"];
+    double upper_arms_com = -flyer_params["upper_arms_length"] / 2.0;
+    double upper_arms_inertia = upper_arms_mass / flyer_params["upper_arms_length"] * pow(flyer_params["upper_arms_length"],3)/3.0;
+    flyer.upper_arms = Body::Rigid(MassProperties(upper_arms_mass, Vec3(0.0, upper_arms_com, 0.0), Inertia(upper_arms_inertia)));
+    flyer.upper_arms.addDecoration(Transform(Vec3(0.0,-flyer_params["upper_arms_length"]/2.0, -flyer_params["torso_width"]/2.0-flyer_params["upper_arms_radius"])), 
+                                  DecorativeCylinder(flyer_params["upper_arms_radius"], flyer_params["upper_arms_length"]/2.0));
+    flyer.upper_arms.addDecoration(Transform(Vec3(0.0,-flyer_params["upper_arms_length"]/2.0, flyer_params["torso_width"]/2.0+flyer_params["upper_arms_radius"])), 
+                                  DecorativeCylinder(flyer_params["upper_arms_radius"], flyer_params["upper_arms_length"]/2.0));
+
+    // mass distributed torso+head
+    double torso_mass = flyer_params["body_density"] * flyer_params["torso_length"] * flyer_params["torso_width"] * flyer_params["torso_depth"];
+    double head_mass = flyer_params["body_density"] * (4.0/3.0) * M_PI * pow(flyer_params["head_radius"],3);
+    // relative to point flyer_params["upper_arms_radius"] below top of torso
+    double torso_head_com = (-torso_mass * (flyer_params["torso_length"]/2.0-flyer_params["upper_arms_radius"]) + 
+        head_mass * (flyer_params["upper_arms_radius"]+flyer_params["neck_length"]+flyer_params["head_radius"])) / (torso_mass + head_mass);
+    double torso_inertia_com = (1.0/12.0) * torso_mass * (flyer_params["torso_length"]*flyer_params["torso_length"] + flyer_params["torso_depth"]*flyer_params["torso_depth"]);
+    double head_inertia_com = (2.0/5.0) * head_mass * flyer_params["head_radius"]*flyer_params["head_radius"];
+    double torso_head_inertia = torso_inertia_com + torso_mass*pow(flyer_params["torso_length"]/2.0-flyer_params["upper_arms_radius"],3) +
+                                head_inertia_com + head_mass*pow(flyer_params["upper_arms_radius"]+flyer_params["neck_length"]+flyer_params["head_radius"],2);
+    flyer.torso_head = Body::Rigid(MassProperties(torso_mass+head_mass, Vec3(0.0, torso_head_com, 0.0), Inertia(torso_head_inertia)));
+    flyer.torso_head.addDecoration(Transform(Vec3(0.0,-flyer_params["torso_length"]/2.0+flyer_params["upper_arms_radius"], 0.0)), 
+        DecorativeBrick(Vec3(flyer_params["torso_depth"]/2.0, flyer_params["torso_length"]/2.0, flyer_params["torso_width"]/2.0)));
+    flyer.torso_head.addDecoration(Transform(Vec3(0.0,flyer_params["neck_length"]+flyer_params["head_radius"]+flyer_params["upper_arms_radius"], 0.0)), 
+        DecorativeSphere(flyer_params["head_radius"]));
+
+    // mass distributed upper legs
+    double upper_legs_mass = 2.0 * flyer_params["body_density"] * flyer_params["upper_legs_length"] * 
+        M_PI * flyer_params["upper_legs_radius"] * flyer_params["upper_legs_radius"];
+    double upper_legs_com = -flyer_params["upper_legs_length"] / 2.0;
+    double upper_legs_inertia = upper_legs_mass / flyer_params["upper_legs_length"] * pow(flyer_params["upper_legs_length"],3)/3.0;
+    flyer.upper_legs = Body::Rigid(MassProperties(upper_legs_mass, Vec3(0.0, upper_legs_com, 0.0), Inertia(upper_legs_inertia)));
+    flyer.upper_legs.addDecoration(Transform(Vec3(0.0,-flyer_params["upper_legs_length"]/2.0, -flyer_params["torso_width"]/2.0+flyer_params["upper_legs_radius"])), 
+                                  DecorativeCylinder(flyer_params["upper_legs_radius"], flyer_params["upper_legs_length"]/2.0));
+    flyer.upper_legs.addDecoration(Transform(Vec3(0.0,-flyer_params["upper_legs_length"]/2.0, flyer_params["torso_width"]/2.0-flyer_params["upper_legs_radius"])), 
+                                  DecorativeCylinder(flyer_params["upper_legs_radius"], flyer_params["upper_legs_length"]/2.0));
+
+    // mass distributed lower legs
+    double lower_legs_mass = 2.0 * flyer_params["body_density"] * flyer_params["lower_legs_length"] * 
+        M_PI * flyer_params["lower_legs_radius"] * flyer_params["lower_legs_radius"];
+    double lower_legs_com = -flyer_params["lower_legs_length"] / 2.0;
+    double lower_legs_inertia = lower_legs_mass / flyer_params["lower_legs_length"] * pow(flyer_params["lower_legs_length"],3)/3.0;
+    flyer.lower_legs = Body::Rigid(MassProperties(lower_legs_mass, Vec3(0.0, lower_legs_com, 0.0), Inertia(lower_legs_inertia)));
+    flyer.lower_legs.addDecoration(Transform(Vec3(0.0,-flyer_params["lower_legs_length"]/2.0, -flyer_params["torso_width"]/2.0+flyer_params["upper_legs"])), 
+                                  DecorativeCylinder(flyer_params["lower_legs_radius"], flyer_params["lower_legs_length"]/2.0));
+    flyer.lower_legs.addDecoration(Transform(Vec3(0.0,-flyer_params["lower_legs_length"]/2.0, flyer_params["torso_width"]/2.0-flyer_params["upper_legs_radius"])), 
+                                  DecorativeCylinder(flyer_params["lower_legs_radius"], flyer_params["lower_legs_length"]/2.0));
+
+    std::cout << "flyer height " <<flyer_params["lower_legs_length"]+flyer_params["upper_legs_length"]+flyer_params["torso_length"]+
+        flyer_params["neck_length"]+flyer_params["head_radius"]*2 << 
+        " arms " << flyer_params["upper_arms_length"]+flyer_params["lower_arms_length"] << std::endl;
+    std::cout << "total mass " << lower_arms_mass+upper_arms_mass+torso_mass+head_mass+upper_legs_mass+lower_legs_mass << std::endl;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Yes, Pin is a mobilized body, but really it behaves like the hinge, so name it after the hinge bodypart
+    flyer.hands = MobilizedBody::Pin (lines_anchor, Transform(Vec3(0,-lines_length,0.0)),
+        flyer.lower_arms, Transform(Vec3(0, 0, 0)));
+    flyer.elbows = MobilizedBody::Pin(flyer.hands, Transform(Vec3(0,-flyer_params["lower_arms_length"],0.0)),
+        flyer.upper_arms, Transform(Vec3(0, 0, 0)));
+    flyer.shoulders = MobilizedBody::Pin(flyer.elbows, Transform(Vec3(0,-flyer_params["upper_arms_length"],0.0)),
+        flyer.torso_head, Transform(Vec3(0, 0, 0)));
+    flyer.hips = MobilizedBody::Pin(flyer.shoulders, Transform(Vec3(0,-flyer_params["torso_length"]+flyer_params["upper_arms_radius"],0.0)),
+        flyer.upper_legs, Transform(Vec3(0, 0, 0)));
+    flyer.knees = MobilizedBody::Pin(flyer.hips, Transform(Vec3(0,-flyer_params["upper_legs_length"],0.0)),
+        flyer.lower_legs, Transform(Vec3(0, 0, 0)));
+
+    joints.push_back(&flyer.hands);
+    joints.push_back(&flyer.elbows);
+    joints.push_back(&flyer.shoulders);
+    joints.push_back(&flyer.hips);
+    joints.push_back(&flyer.knees);
+    joint_index[std::string("hands")] = 0;
+    joint_index[std::string("elbows")] = 1;
+    joint_index[std::string("shoulders")] = 2;
+    joint_index[std::string("hips")] = 3;
+    joint_index[std::string("knees")] = 4;
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // damping in all joints
+    double joint_damping=50.0;
+    flyer.hands_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.hands, MobilizerUIndex(0), joint_damping);
+    flyer.elbows_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.elbows, MobilizerUIndex(0), joint_damping);
+    flyer.shoulders_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.shoulders, MobilizerUIndex(0), joint_damping);
+    flyer.hips_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.hips, MobilizerUIndex(0), joint_damping);
+    flyer.knees_damper = SimTK::Force::MobilityLinearDamper::MobilityLinearDamper(forces, flyer.knees, MobilizerUIndex(0), joint_damping);
+
+    // range of motion of all joints
+    double mobile_anchor=1.0, mobile_hands=1.0, mobile_elbows=1.0, mobile_shoulders=1.0, mobile_hips=1.0, mobile_knees=1.0;
+    double joint_range_stiffness=10000.0, joint_range_damping=1.0;
+    flyer.hands_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.hands, MobilizerQIndex(0), 
+        joint_range_stiffness, joint_range_damping, -mobile_hands*180.0*M_PI/180.0, mobile_hands*180.0*M_PI/180.0);
+    flyer.elbows_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.elbows, MobilizerQIndex(0), 
+        joint_range_stiffness, joint_range_damping, mobile_elbows*0.0*M_PI/180.0, mobile_elbows*160.0*M_PI/180.0);
+    flyer.shoulders_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.shoulders, MobilizerQIndex(0), 
+        joint_range_stiffness, joint_range_damping, -mobile_shoulders*160.0*M_PI/180.0, mobile_shoulders*5.0*M_PI/180.0);
+    flyer.hips_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.hips, MobilizerQIndex(0), 
+        joint_range_stiffness, joint_range_damping, -mobile_hips*145.0*M_PI/180.0, mobile_hips*45.0*M_PI/180.0);
+    flyer.knees_range_limit = SimTK::Force::MobilityLinearStop::MobilityLinearStop(forces, flyer.knees, MobilizerQIndex(0), 
+        joint_range_stiffness, joint_range_damping, mobile_knees*0.0*M_PI/180.0, mobile_knees*150.0*M_PI/180.0);
+}
+
+
+
 int main(int argc, char *argv[]) {
     double slow_mo_rate, gravity_accel;
     std::string rig_filename, flyer_filename, initial_state_filename, poses_filename;
@@ -354,159 +543,20 @@ int main(int argc, char *argv[]) {
     std::map<std::string, double> rig_params;
     read_map(rig_filename, rig_params);
 
-    Body::Rigid fly_crane_body(MassProperties(1.0, Vec3(0.0), Inertia(1.0)));
-    fly_crane_body.addDecoration(Transform(), DecorativeBrick(Vec3(rig_params["fly_crane_thickness"]/2.0,
-        rig_params["fly_crane_thickness"]/2.0,rig_params["fly_crane_width"])));
-    MobilizedBody::Pin fly_crane(matter.Ground(), Transform(Vec3(0.0, rig_params["fly_crane_height"]+rig_params["fly_crane_thickness"]/2.0, 0.0)),
-        fly_crane_body, Transform(Vec3(0, 0, 0)));
 
-    PolygonalMesh net_mesh;
-    net_mesh.loadFile("net.obj");
-    Body::Rigid net_body(MassProperties(1.0, Vec3(0.0), Inertia(1.0)));
-    DecorativeMesh net_mesh_decor(net_mesh);
-    net_mesh_decor.setRepresentation(DecorativeGeometry::DrawWireframe);
-    net_mesh_decor.setLineThickness(2.0);
-    net_mesh_decor.setColor(Vec3(1.0, 1.0, 1.0));
-    net_body.addDecoration(Transform(), net_mesh_decor);
-    MobilizedBody::Pin net(matter.Ground(), Transform(Vec3(rig_params["net_offset"], rig_params["net_height"], 0.0)),
-        net_body, Transform(Vec3(0, 0, 0)));
-
-    // mass distributed lines + point mass bar
-    double lines_bar_com = -(rig_params["lines_mass"] * rig_params["lines_length"]/2.0 + 
-                             rig_params["bar_mass"]*rig_params["lines_length"])/(rig_params["lines_mass"]+rig_params["bar_mass"]);
-    double lines_bar_inertia = (rig_params["lines_mass"]/rig_params["lines_length"]) * pow(rig_params["lines_length"],3)/3.0 + 
-                                rig_params["bar_mass"] * pow(rig_params["lines_length"],3)/3.0;
-    Body::Rigid lines_bar_body(MassProperties(rig_params["lines_mass"]+rig_params["bar_mass"], Vec3(0.0, lines_bar_com, 0.0), 
-        Inertia(lines_bar_inertia)));
-    lines_bar_body.addDecoration(Transform(), DecorativeLine(Vec3(0.0, 0.0, -rig_params["bar_length"]/2.0), 
-        Vec3(0.0, -rig_params["lines_length"], -rig_params["bar_length"]/2.0)));
-    lines_bar_body.addDecoration(Transform(), DecorativeLine(Vec3(0.0, 0.0,  rig_params["bar_length"]/2.0), 
-        Vec3(0.0, -rig_params["lines_length"],  rig_params["bar_length"]/2.0)));
-    lines_bar_body.addDecoration(Transform(Rotation(90.0*M_PI/180.0,CoordinateAxis(2)),Vec3(0.0, -rig_params["lines_length"], 0.0)), 
-                                 DecorativeCylinder(rig_params["bar_radius"], rig_params["bar_length"]/2.0));
+    Rig rig;
+    create_rig(matter.Ground(), rig_params, forces, rig);
 
     std::map<std::string, double> flyer_params;
     read_map(flyer_filename, flyer_params);
 
-    // mass distributed lower arms
-    double lower_arms_mass = 2.0 * flyer_params["body_density"] * flyer_params["lower_arms_length"] * 
-        M_PI * flyer_params["lower_arms_radius"] * flyer_params["lower_arms_radius"];
-    double lower_arms_com = -flyer_params["lower_arms_length"] / 2.0;
-    double lower_arms_inertia = lower_arms_mass / flyer_params["lower_arms_length"] * pow(flyer_params["lower_arms_length"],3)/3.0;
-    Body::Rigid lower_arms_body(MassProperties(lower_arms_mass, Vec3(0.0, lower_arms_com, 0.0), Inertia(lower_arms_inertia)));
-    lower_arms_body.addDecoration(Transform(Vec3(0.0,-flyer_params["lower_arms_length"]/2.0, -flyer_params["torso_width"]/2.0-flyer_params["upper_arms_radius"])), 
-                                  DecorativeCylinder(flyer_params["lower_arms_radius"], flyer_params["lower_arms_length"]/2.0));
-    lower_arms_body.addDecoration(Transform(Vec3(0.0,-flyer_params["lower_arms_length"]/2.0, flyer_params["torso_width"]/2.0+flyer_params["upper_arms_radius"])), 
-                                  DecorativeCylinder(flyer_params["lower_arms_radius"], flyer_params["lower_arms_length"]/2.0));
+    // create rigid bodies
+    Flyer flyer;
 
-    // mass distributed upper arms
-    double upper_arms_mass = 2.0 * flyer_params["body_density"] * flyer_params["upper_arms_length"] * 
-        M_PI * flyer_params["upper_arms_radius"] * flyer_params["upper_arms_radius"];
-    double upper_arms_com = -flyer_params["upper_arms_length"] / 2.0;
-    double upper_arms_inertia = upper_arms_mass / flyer_params["upper_arms_length"] * pow(flyer_params["upper_arms_length"],3)/3.0;
-    Body::Rigid upper_arms_body(MassProperties(upper_arms_mass, Vec3(0.0, upper_arms_com, 0.0), Inertia(upper_arms_inertia)));
-    upper_arms_body.addDecoration(Transform(Vec3(0.0,-flyer_params["upper_arms_length"]/2.0, -flyer_params["torso_width"]/2.0-flyer_params["upper_arms_radius"])), 
-                                  DecorativeCylinder(flyer_params["upper_arms_radius"], flyer_params["upper_arms_length"]/2.0));
-    upper_arms_body.addDecoration(Transform(Vec3(0.0,-flyer_params["upper_arms_length"]/2.0, flyer_params["torso_width"]/2.0+flyer_params["upper_arms_radius"])), 
-                                  DecorativeCylinder(flyer_params["upper_arms_radius"], flyer_params["upper_arms_length"]/2.0));
-
-    // mass distributed torso+head
-    double torso_mass = flyer_params["body_density"] * flyer_params["torso_length"] * flyer_params["torso_width"] * flyer_params["torso_depth"];
-    double head_mass = flyer_params["body_density"] * (4.0/3.0) * M_PI * pow(flyer_params["head_radius"],3);
-    // relative to point flyer_params["upper_arms_radius"] below top of torso
-    double torso_head_com = (-torso_mass * (flyer_params["torso_length"]/2.0-flyer_params["upper_arms_radius"]) + 
-        head_mass * (flyer_params["upper_arms_radius"]+flyer_params["neck_length"]+flyer_params["head_radius"])) / (torso_mass + head_mass);
-    double torso_inertia_com = (1.0/12.0) * torso_mass * (flyer_params["torso_length"]*flyer_params["torso_length"] + flyer_params["torso_depth"]*flyer_params["torso_depth"]);
-    double head_inertia_com = (2.0/5.0) * head_mass * flyer_params["head_radius"]*flyer_params["head_radius"];
-    double torso_head_inertia = torso_inertia_com + torso_mass*pow(flyer_params["torso_length"]/2.0-flyer_params["upper_arms_radius"],3) +
-                                head_inertia_com + head_mass*pow(flyer_params["upper_arms_radius"]+flyer_params["neck_length"]+flyer_params["head_radius"],2);
-    Body::Rigid torso_head_body(MassProperties(torso_mass+head_mass, Vec3(0.0, torso_head_com, 0.0), Inertia(torso_head_inertia)));
-    torso_head_body.addDecoration(Transform(Vec3(0.0,-flyer_params["torso_length"]/2.0+flyer_params["upper_arms_radius"], 0.0)), 
-        DecorativeBrick(Vec3(flyer_params["torso_depth"]/2.0, flyer_params["torso_length"]/2.0, flyer_params["torso_width"]/2.0)));
-    torso_head_body.addDecoration(Transform(Vec3(0.0,flyer_params["neck_length"]+flyer_params["head_radius"]+flyer_params["upper_arms_radius"], 0.0)), 
-        DecorativeSphere(flyer_params["head_radius"]));
-
-    // mass distributed upper legs
-    double upper_legs_mass = 2.0 * flyer_params["body_density"] * flyer_params["upper_legs_length"] * 
-        M_PI * flyer_params["upper_legs_radius"] * flyer_params["upper_legs_radius"];
-    double upper_legs_com = -flyer_params["upper_legs_length"] / 2.0;
-    double upper_legs_inertia = upper_legs_mass / flyer_params["upper_legs_length"] * pow(flyer_params["upper_legs_length"],3)/3.0;
-    Body::Rigid upper_legs_body(MassProperties(upper_legs_mass, Vec3(0.0, upper_legs_com, 0.0), Inertia(upper_legs_inertia)));
-    upper_legs_body.addDecoration(Transform(Vec3(0.0,-flyer_params["upper_legs_length"]/2.0, -flyer_params["torso_width"]/2.0+flyer_params["upper_legs_radius"])), 
-                                  DecorativeCylinder(flyer_params["upper_legs_radius"], flyer_params["upper_legs_length"]/2.0));
-    upper_legs_body.addDecoration(Transform(Vec3(0.0,-flyer_params["upper_legs_length"]/2.0, flyer_params["torso_width"]/2.0-flyer_params["upper_legs_radius"])), 
-                                  DecorativeCylinder(flyer_params["upper_legs_radius"], flyer_params["upper_legs_length"]/2.0));
-
-    // mass distributed lower legs
-    double lower_legs_mass = 2.0 * flyer_params["body_density"] * flyer_params["lower_legs_length"] * 
-        M_PI * flyer_params["lower_legs_radius"] * flyer_params["lower_legs_radius"];
-    double lower_legs_com = -flyer_params["lower_legs_length"] / 2.0;
-    double lower_legs_inertia = lower_legs_mass / flyer_params["lower_legs_length"] * pow(flyer_params["lower_legs_length"],3)/3.0;
-    Body::Rigid lower_legs_body(MassProperties(lower_legs_mass, Vec3(0.0, lower_legs_com, 0.0), Inertia(lower_legs_inertia)));
-    lower_legs_body.addDecoration(Transform(Vec3(0.0,-flyer_params["lower_legs_length"]/2.0, -flyer_params["torso_width"]/2.0+flyer_params["upper_legs_radius"])), 
-                                  DecorativeCylinder(flyer_params["lower_legs_radius"], flyer_params["lower_legs_length"]/2.0));
-    lower_legs_body.addDecoration(Transform(Vec3(0.0,-flyer_params["lower_legs_length"]/2.0, flyer_params["torso_width"]/2.0-flyer_params["upper_legs_radius"])), 
-                                  DecorativeCylinder(flyer_params["lower_legs_radius"], flyer_params["lower_legs_length"]/2.0));
-
-    std::cout << "flyer height " <<flyer_params["lower_legs_length"]+flyer_params["upper_legs_length"]+flyer_params["torso_length"]+
-        flyer_params["neck_length"]+flyer_params["head_radius"]*2 << 
-        " arms " << flyer_params["upper_arms_length"]+flyer_params["lower_arms_length"] << std::endl;
-    std::cout << "total mass " << lower_arms_mass+upper_arms_mass+torso_mass+head_mass+upper_legs_mass+lower_legs_mass << std::endl;
-
-    // Yes, Pin is a mobilized body, but really it behaves like the hinge, so name it after the hinge bodypart
-    MobilizedBody::Pin lines_anchor(matter.Ground(), Transform(Vec3(0.0, rig_params["fly_crane_height"], 0.0)),
-        lines_bar_body, Transform(Vec3(0, 0, 0)));
-    MobilizedBody::Pin hands(lines_anchor, Transform(Vec3(0,-rig_params["lines_length"],0.0)),
-        lower_arms_body, Transform(Vec3(0, 0, 0)));
-    MobilizedBody::Pin elbows(hands, Transform(Vec3(0,-flyer_params["lower_arms_length"],0.0)),
-        upper_arms_body, Transform(Vec3(0, 0, 0)));
-    MobilizedBody::Pin shoulders(elbows, Transform(Vec3(0,-flyer_params["upper_arms_length"],0.0)),
-        torso_head_body, Transform(Vec3(0, 0, 0)));
-    MobilizedBody::Pin hips(shoulders, Transform(Vec3(0,-flyer_params["torso_length"]+flyer_params["upper_arms_radius"],0.0)),
-        upper_legs_body, Transform(Vec3(0, 0, 0)));
-    MobilizedBody::Pin knees(hips, Transform(Vec3(0,-flyer_params["upper_legs_length"],0.0)),
-        lower_legs_body, Transform(Vec3(0, 0, 0)));
-
-
-    std::vector<MobilizedBody::Pin *> joints;
-    joints.push_back(&lines_anchor);
-    joints.push_back(&hands);
-    joints.push_back(&elbows);
-    joints.push_back(&shoulders);
-    joints.push_back(&hips);
-    joints.push_back(&knees);
+    std::vector<MobilizedBody *> joints;
     std::map<std::string,int> joint_index;
-    joint_index[std::string("lines_anchor")] = 0;
-    joint_index[std::string("hands")] = 1;
-    joint_index[std::string("elbows")] = 2;
-    joint_index[std::string("shoulders")] = 3;
-    joint_index[std::string("hips")] = 4;
-    joint_index[std::string("knees")] = 5;
 
-    // damping in all joints
-    double joint_damping=50.0;
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper lines_fly_crane_damper(forces, lines_anchor, MobilizerUIndex(0), 100.0);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hands_damper(forces, hands, MobilizerUIndex(0), joint_damping);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper elbows_damper(forces, elbows, MobilizerUIndex(0), joint_damping);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper shoulder_damper(forces, shoulders, MobilizerUIndex(0), joint_damping);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper hips_damper(forces, hips, MobilizerUIndex(0), joint_damping);
-    SimTK::Force::MobilityLinearDamper::MobilityLinearDamper knees_damper(forces, knees, MobilizerUIndex(0), joint_damping);
-
-    // range of motion of all joints
-    double mobile_anchor=1.0, mobile_hands=1.0, mobile_elbows=1.0, mobile_shoulders=1.0, mobile_hips=1.0, mobile_knees=1.0;
-    double joint_range_stiffness=10000.0, joint_range_damping=1.0;
-    SimTK::Force::MobilityLinearStop::MobilityLinearStop anchor_stop(forces, lines_anchor, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, -mobile_anchor*180.0*M_PI/180.0, mobile_anchor*180.0*M_PI/180.0);
-    SimTK::Force::MobilityLinearStop::MobilityLinearStop hands_stop(forces, hands, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, -mobile_hands*180.0*M_PI/180.0, mobile_hands*180.0*M_PI/180.0);
-    SimTK::Force::MobilityLinearStop::MobilityLinearStop elbows_stop(forces, elbows, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, mobile_elbows*0.0*M_PI/180.0, mobile_elbows*160.0*M_PI/180.0);
-    SimTK::Force::MobilityLinearStop::MobilityLinearStop shoulders_stop(forces, shoulders, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, -mobile_shoulders*160.0*M_PI/180.0, mobile_shoulders*5.0*M_PI/180.0);
-    SimTK::Force::MobilityLinearStop::MobilityLinearStop hips_stop(forces, hips, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, -mobile_hips*150.0*M_PI/180.0, mobile_hips*25.0*M_PI/180.0);
-    SimTK::Force::MobilityLinearStop::MobilityLinearStop knees_stop(forces, knees, MobilizerQIndex(0), 
-        joint_range_stiffness, joint_range_damping, mobile_knees*0.0*M_PI/180.0, mobile_knees*150.0*M_PI/180.0);
+    create_flyer(rig.lines_mobile, rig_params["lines_length"], flyer_params, forces, joints, joint_index, flyer);
 
     double fps = 120.0;
     double dt = 1.0/fps;
@@ -535,17 +585,17 @@ int main(int argc, char *argv[]) {
     system.addEventHandler
        (new PoseForceUpdater(&pose, Real(0.001))); // update forces every 1 ms
 
-
     // Initialize the system and state.
     system.realizeTopology ();
     State state = system.getDefaultState();
 
     // set initial position
-    double initial_joint_pos[N_JOINTS], initial_joint_vel[N_JOINTS];
-
-    read_joint_state(initial_state_filename, joint_index, initial_joint_pos, initial_joint_vel);
-    set_joint_state(&state, initial_joint_pos, initial_joint_vel, joints);
-
+    double initial_lines_pos, initial_lines_vel;
+    std::map<std::string, double> initial_joint_pos, initial_joint_vel;
+    std::string initial_pose_name;
+    read_sys_state(initial_state_filename, joint_index, initial_lines_pos, initial_lines_vel, initial_joint_pos, initial_joint_vel, initial_pose_name);
+    set_sys_state(state, initial_lines_pos, initial_lines_vel, initial_joint_pos, initial_joint_vel, &rig.lines_mobile, joint_index, joints);
+    pose.set_pose(initial_pose_name);
 
     // Simulate it.
     RungeKuttaMersonIntegrator integ(system);

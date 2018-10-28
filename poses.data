@@ -1,19 +1,21 @@
-POSE loose l 4 -
+POSE loose l 5 -
+    hands     0 0.0
     elbows    0 0.0
     shoulders 0 0.0
     hips      0 0.0
     knees     0 0.0
-POSE flat f 4 -
+POSE flat f 5 -
+    hands     0 0.0
     elbows    0 50.0
-    shoulders 0 50.0
-    hips      0 100.0
-    knees     0 100.0
+    shoulders 0 75.0
+    hips      0 150.0
+    knees     0 150.0
 POSE hollow h 2 flat
-    shoulders -10 50.0
-    hips      -10 100.0
+    shoulders -20 75.0
+    hips      -20 150.0
 POSE sweep s 3 flat
-    shoulders  5 50.0
-    hips      25 100.0
-    knees     10 100.0
+    shoulders  5 75.0
+    hips      25 150.0
+    knees     10 150.0
 POSE seven 7 1 flat
-    shoulders -110 50.0
+    shoulders -110 75.0
