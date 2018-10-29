@@ -350,15 +350,26 @@ private:
     Pose *m_pose;
 };
 
-class PeakHeightDetector : public TriggeredEventReporter {
+class PeakHeightDetector : public TriggeredEventHandler {
 public:
     PeakHeightDetector(MobilizedBody *lines_mobile,
-                      double lines_length) : TriggeredEventReporter(Stage::Velocity), m_lines_mobile(lines_mobile), m_lines_length(lines_length) {}
+                      double lines_length,
+                      MobilizedBody &ground,
+                      Visualizer *viz) : TriggeredEventHandler(Stage::Velocity), m_lines_mobile(lines_mobile), m_lines_length(lines_length), m_viz(viz) {
+        m_viz->addDecoration(ground, Transform(Vec3(0.0, 0.0, 0.0)), DecorativeSphere(0.05).setColor(Vec3(1,0,0)));
+        m_viz->addDecoration(ground, Transform(Vec3(0.0, 0.0, 0.0)), DecorativeSphere(0.05).setColor(Vec3(1,0,0)));
+    }
 
-    virtual void handleEvent(const State &state) const {
+    virtual void handleEvent(State &state, Real accuracy, bool &shouldTerminate) const {
         Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
+        if (bar_pos[0] < 0.0) {
+            m_viz->updDecoration(0).setTransform(Transform(bar_pos));
+        } else {
+            m_viz->updDecoration(1).setTransform(Transform(bar_pos));
+        }
         std::cout << "bar height " << bar_pos[1] << std::endl;
     }
+
     virtual Real getValue(const State &state) const {
         Vec3 bar_vel = m_lines_mobile->findStationVelocityInGround(state, Vec3(0, -m_lines_length, 0));
         return bar_vel[1];
@@ -366,6 +377,7 @@ public:
 private:
     MobilizedBody *m_lines_mobile;
     Real m_lines_length;
+    Visualizer *m_viz;
 };
 
 typedef struct {
@@ -590,10 +602,10 @@ int main(int argc, char *argv[]) {
     system.addEventHandler
        (new PoseForceUpdater(&pose, Real(0.001))); // update forces every 1 ms
 
-    PeakHeightDetector *peak = new PeakHeightDetector(&rig.lines_mobile, rig_params["lines_length"]);
+    PeakHeightDetector *peak = new PeakHeightDetector(&rig.lines_mobile, rig_params["lines_length"], matter.Ground(), &viz);
     peak->getTriggerInfo().setTriggerOnFallingSignTransition(true);
     peak->getTriggerInfo().setTriggerOnRisingSignTransition(false);
-    system.addEventReporter(peak);
+    system.addEventHandler(peak);
 
     // Initialize the system and state.
     system.realizeTopology ();
