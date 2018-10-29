@@ -301,25 +301,6 @@ private:
     std::map<unsigned,std::string> keymap;
 };
 
-// This is a custom InputListener. We'll register it prior to the InputSilo so
-// that we can intercept all input and say something about it. No input processing
-// is done here other than that, and we pass on everything we receive down the
-// chain to the next listener (which will be an InputSilo in this case).
-class MyListener : public Visualizer::InputListener {
-public:
-    MyListener(Pose *poses) : l_poses(poses) {}
-
-    ~MyListener() {}
-
-    virtual bool keyPressed(unsigned key, unsigned modifier) override {
-        return (l_poses->do_keypress(key));
-    }
-
-private:
-    Pose *l_poses;
-
-};
-
 class PoseForceUpdater : public PeriodicEventHandler {
 public:
     PoseForceUpdater(Pose *pose, Real interval) : PeriodicEventHandler(interval), l_pose(pose) {}
@@ -338,8 +319,9 @@ class UserInputHandler : public PeriodicEventHandler {
 public:
     UserInputHandler(Visualizer& viz,
                      Visualizer::InputSilo& silo, 
+                     Pose *pose,
                      Real interval) 
-    :   PeriodicEventHandler(interval), m_viz(viz), m_silo(silo) {}
+    :   PeriodicEventHandler(interval), m_viz(viz), m_silo(silo), m_pose(pose) {}
 
     virtual void handleEvent(State& state, Real accuracy,
                              bool& shouldTerminate) const override 
@@ -353,16 +335,37 @@ public:
                     shouldTerminate = true;
                     m_silo.clear();
                     return;
+                } else {
+                    m_pose->do_keypress(key);
                 }
                 printf("Handler sees key=%u, modifiers=%u\n",key,modifiers);
             }
 
-        }  
+        }   
     }
 
 private:
     Visualizer&            m_viz;
     Visualizer::InputSilo& m_silo;
+    Pose *m_pose;
+};
+
+class PeakHeightDetector : public TriggeredEventReporter {
+public:
+    PeakHeightDetector(MobilizedBody *lines_mobile,
+                      double lines_length) : TriggeredEventReporter(Stage::Velocity), m_lines_mobile(lines_mobile), m_lines_length(lines_length) {}
+
+    virtual void handleEvent(const State &state) const {
+        Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
+        std::cout << "bar height " << bar_pos[1] << std::endl;
+    }
+    virtual Real getValue(const State &state) const {
+        Vec3 bar_vel = m_lines_mobile->findStationVelocityInGround(state, Vec3(0, -m_lines_length, 0));
+        return bar_vel[1];
+    }
+private:
+    MobilizedBody *m_lines_mobile;
+    Real m_lines_length;
 };
 
 typedef struct {
@@ -580,14 +583,17 @@ int main(int argc, char *argv[]) {
     system.addEventReporter(new Visualizer::Reporter(viz, dt));
 
     // from ChainExample.cpp
-    MyListener*            listener = new MyListener(&pose);
     Visualizer::InputSilo* silo = new Visualizer::InputSilo();
-    viz.addInputListener(listener); // order matters here
     viz.addInputListener(silo);
     system.addEventHandler
-       (new UserInputHandler(viz,*silo, Real(0.01))); // check input every 10ms
+       (new UserInputHandler(viz,*silo, &pose,  Real(0.01))); // check input every 10ms
     system.addEventHandler
        (new PoseForceUpdater(&pose, Real(0.001))); // update forces every 1 ms
+
+    PeakHeightDetector *peak = new PeakHeightDetector(&rig.lines_mobile, rig_params["lines_length"]);
+    peak->getTriggerInfo().setTriggerOnFallingSignTransition(true);
+    peak->getTriggerInfo().setTriggerOnRisingSignTransition(false);
+    system.addEventReporter(peak);
 
     // Initialize the system and state.
     system.realizeTopology ();
