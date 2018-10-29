@@ -35,7 +35,8 @@ void args_to_map(int argc, char *argv[], std::map<std::string,std::string> &args
 }
 
 void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_accel,
-    std::string *rig_filename, std::string *flyer_filename, std::string *initial_state_filename, std::string *poses_filename) {
+    std::string *rig_filename, std::string *flyer_filename, std::string *initial_state_filename, std::string *poses_filename,
+    bool *headless) {
 
     std::map<std::string,std::string> args_map;
 
@@ -70,6 +71,11 @@ void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_ac
         *poses_filename = "poses.data";
     } else {
         *poses_filename = args_map["--poses"];
+    }
+    if (args_map.find("--headless") == args_map.end()) {
+        *headless = false;
+    } else {
+        *headless = args_map["--headless"] == "true";
     }
 
 }
@@ -356,16 +362,20 @@ public:
                       double lines_length,
                       MobilizedBody &ground,
                       Visualizer *viz) : TriggeredEventHandler(Stage::Velocity), m_lines_mobile(lines_mobile), m_lines_length(lines_length), m_viz(viz) {
-        m_viz->addDecoration(ground, Transform(Vec3(0.0, 0.0, 0.0)), DecorativeSphere(0.05).setColor(Vec3(1,0,0)));
-        m_viz->addDecoration(ground, Transform(Vec3(0.0, 0.0, 0.0)), DecorativeSphere(0.05).setColor(Vec3(1,0,0)));
+        if (m_viz != NULL) {
+            m_viz->addDecoration(ground, Transform(Vec3(0.0, 0.0, 0.0)), DecorativeSphere(0.05).setColor(Vec3(1,0,0)));
+            m_viz->addDecoration(ground, Transform(Vec3(0.0, 0.0, 0.0)), DecorativeSphere(0.05).setColor(Vec3(1,0,0)));
+        }
     }
 
     virtual void handleEvent(State &state, Real accuracy, bool &shouldTerminate) const {
         Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
-        if (bar_pos[0] < 0.0) {
-            m_viz->updDecoration(0).setTransform(Transform(bar_pos));
-        } else {
-            m_viz->updDecoration(1).setTransform(Transform(bar_pos));
+        if (m_viz != NULL) {
+            if (bar_pos[0] < 0.0) {
+                m_viz->updDecoration(0).setTransform(Transform(bar_pos));
+            } else {
+                m_viz->updDecoration(1).setTransform(Transform(bar_pos));
+            }
         }
         std::cout << "bar height " << bar_pos[1] << std::endl;
     }
@@ -550,8 +560,9 @@ void create_flyer(MobilizedBody lines_anchor, double lines_length, std::map<std:
 int main(int argc, char *argv[]) {
     double slow_mo_rate, gravity_accel;
     std::string rig_filename, flyer_filename, initial_state_filename, poses_filename;
+    bool headless;
 
-    parse_args(argc, argv, &slow_mo_rate, &gravity_accel, &rig_filename, &flyer_filename, &initial_state_filename, &poses_filename);
+    parse_args(argc, argv, &slow_mo_rate, &gravity_accel, &rig_filename, &flyer_filename, &initial_state_filename, &poses_filename, &headless);
 
     // Create the system.
     MultibodySystem system;
@@ -583,26 +594,29 @@ int main(int argc, char *argv[]) {
     // read poses before almost everything UI related (and before topology is realized)
     Pose pose(poses_filename, flyer_params, joints, forces);
 
-    // Set up visualization.
-    Visualizer viz(system);
-    // camera
-    viz.setCameraTransform(Transform(Rotation(14.0*M_PI/180.0,CoordinateAxis(0)),Vec3(0.0, 3.0, 10.0)));
-    viz.setCameraFieldOfView(0.8);
-    // real time, slow-mo if needed
-    viz.setMode(SimTK::Visualizer::RealTime);
-    viz.setRealTimeScale(slow_mo_rate);
+    Visualizer *viz = NULL;
+    if (! headless) {
+        // Set up visualization.
+        viz = new Visualizer(system);
+        // camera
+        viz->setCameraTransform(Transform(Rotation(14.0*M_PI/180.0,CoordinateAxis(0)),Vec3(0.0, 3.0, 10.0)));
+        viz->setCameraFieldOfView(0.8);
+        // real time, slow-mo if needed
+        viz->setMode(SimTK::Visualizer::RealTime);
+        viz->setRealTimeScale(slow_mo_rate);
 
-    system.addEventReporter(new Visualizer::Reporter(viz, dt));
+        system.addEventReporter(new Visualizer::Reporter(*viz, dt));
 
-    // from ChainExample.cpp
-    Visualizer::InputSilo* silo = new Visualizer::InputSilo();
-    viz.addInputListener(silo);
-    system.addEventHandler
-       (new UserInputHandler(viz,*silo, &pose,  Real(0.01))); // check input every 10ms
-    system.addEventHandler
-       (new PoseForceUpdater(&pose, Real(0.001))); // update forces every 1 ms
+        // from ChainExample.cpp
+        Visualizer::InputSilo* silo = new Visualizer::InputSilo();
+        viz->addInputListener(silo);
+        system.addEventHandler
+           (new UserInputHandler(*viz,*silo, &pose,  Real(0.01))); // check input every 10ms
+        system.addEventHandler
+           (new PoseForceUpdater(&pose, Real(0.001))); // update forces every 1 ms
+    }
 
-    PeakHeightDetector *peak = new PeakHeightDetector(&rig.lines_mobile, rig_params["lines_length"], matter.Ground(), &viz);
+    PeakHeightDetector *peak = new PeakHeightDetector(&rig.lines_mobile, rig_params["lines_length"], matter.Ground(), viz);
     peak->getTriggerInfo().setTriggerOnFallingSignTransition(true);
     peak->getTriggerInfo().setTriggerOnRisingSignTransition(false);
     system.addEventHandler(peak);
