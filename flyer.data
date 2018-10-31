@@ -36,8 +36,8 @@ shoulders_max_torque 75.0
 
 hips_lower_limit -145.0
 hips_upper_limit 45.0
-hips_max_torque 150.0
+hips_max_torque 250.0
 
 knees_lower_limit 0.0
 knees_upper_limit 150.0
-knees_max_torque 1.00.0
+knees_max_torque 100.0

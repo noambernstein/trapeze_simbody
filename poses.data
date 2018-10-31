@@ -23,3 +23,8 @@ POSE early_seven 7 2 flat
 POSE seven 8 2 flat
     hips       -5 -
     shoulders -110 -
+POSE curl_in c 4 flat
+    elbows      20.0 -
+    shoulders  -20.0 -
+    hips       -145.0 -
+    knees       150.0 -
