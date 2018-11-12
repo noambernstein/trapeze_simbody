@@ -369,7 +369,7 @@ public:
     {
         Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
         Vec3 bar_vel = m_lines_mobile->findStationVelocityInGround(state, Vec3(0, -m_lines_length, 0));
-        *m_report_io << state.getTime() << " bar phase "<< bar_pos[0]<<" "<<bar_vel[0]<<std::endl;
+        *m_report_io << state.getTime() << " bar phase " << bar_pos[0] <<" "<< bar_pos[1] << "  " << bar_vel[0] << " " <<  bar_vel[1] << std::endl;
     }
 
 private:
