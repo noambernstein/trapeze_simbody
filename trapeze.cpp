@@ -19,7 +19,7 @@ void read_map(std::string filename, std::map<std::string,double> &param_map) {
     inFile.close();
 }
 
-#define USAGE "Usage: "<<argv[0]<<" [ --slow RATE ] [ --rig file ] [ --flyer file ] [ --initial_state file ] [ --poses file ]"
+#define USAGE "Usage: "<<argv[0]<<" [ --slow RATE ] [ --rig file ] [ --flyer file ] [ --initial_state file ] [ --poses file ] [ --report interval ]"
 
 void args_to_map(int argc, char *argv[], std::map<std::string,std::string> &args_map) {
     for (int i=1; i < argc; i++) {
@@ -36,7 +36,7 @@ void args_to_map(int argc, char *argv[], std::map<std::string,std::string> &args
 
 void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_accel,
     std::string *rig_filename, std::string *flyer_filename, std::string *initial_state_filename, std::string *poses_filename,
-    bool *headless) {
+    bool *headless, double *report_interval) {
 
     std::map<std::string,std::string> args_map;
 
@@ -77,7 +77,11 @@ void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_ac
     } else {
         *headless = args_map["--headless"] == "true";
     }
-
+    if (args_map.find("--report") == args_map.end()) {
+        *report_interval = 0.01;
+    } else {
+        *report_interval = std::stod(args_map["--report"]);
+    }
 }
 
 void read_sys_state(std::string filename, std::map<std::string,int> joint_index, 
@@ -356,6 +360,24 @@ private:
     Pose *m_pose;
 };
 
+class BarPositionMonitor : public PeriodicEventReporter {
+public:
+    BarPositionMonitor(std::ofstream *report_io, MobilizedBody *lines_mobile, double lines_length, Real interval)
+    :   PeriodicEventReporter(interval), m_report_io(report_io), m_lines_mobile(lines_mobile), m_lines_length(lines_length) {}
+
+    virtual void handleEvent(const State& state) const
+    {
+        Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
+        Vec3 bar_vel = m_lines_mobile->findStationVelocityInGround(state, Vec3(0, -m_lines_length, 0));
+        *m_report_io << state.getTime() << " bar phase "<< bar_pos[0]<<" "<<bar_vel[0]<<std::endl;
+    }
+
+private:
+    MobilizedBody *m_lines_mobile;
+    Real m_lines_length;
+    std::ofstream *m_report_io;
+};
+
 class PeakHeightDetector : public TriggeredEventHandler {
 public:
     PeakHeightDetector(MobilizedBody *lines_mobile,
@@ -561,8 +583,9 @@ int main(int argc, char *argv[]) {
     double slow_mo_rate, gravity_accel;
     std::string rig_filename, flyer_filename, initial_state_filename, poses_filename;
     bool headless;
+    double report_interval;
 
-    parse_args(argc, argv, &slow_mo_rate, &gravity_accel, &rig_filename, &flyer_filename, &initial_state_filename, &poses_filename, &headless);
+    parse_args(argc, argv, &slow_mo_rate, &gravity_accel, &rig_filename, &flyer_filename, &initial_state_filename, &poses_filename, &headless, &report_interval);
 
     // Create the system.
     MultibodySystem system;
@@ -612,14 +635,21 @@ int main(int argc, char *argv[]) {
         viz->addInputListener(silo);
         system.addEventHandler
            (new UserInputHandler(*viz,*silo, &pose,  Real(0.01))); // check input every 10ms
-        system.addEventHandler
-           (new PoseForceUpdater(&pose, Real(0.001))); // update forces every 1 ms
     }
+    system.addEventHandler
+       (new PoseForceUpdater(&pose, Real(0.001))); // update forces every 1 ms
 
+    // show last peak height
     PeakHeightDetector *peak = new PeakHeightDetector(&rig.lines_mobile, rig_params["lines_length"], matter.Ground(), viz);
     peak->getTriggerInfo().setTriggerOnFallingSignTransition(true);
     peak->getTriggerInfo().setTriggerOnRisingSignTransition(false);
     system.addEventHandler(peak);
+
+    // print out bar in phase space
+    std::ofstream report_io;
+    report_io.open("report.data");
+    system.addEventReporter
+       (new BarPositionMonitor(&report_io, &rig.lines_mobile, rig_params["lines_length"], Real(report_interval))); // update forces every 1 ms
 
     // Initialize the system and state.
     system.realizeTopology ();
