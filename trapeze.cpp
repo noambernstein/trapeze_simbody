@@ -388,7 +388,9 @@ public:
             m_viz->addDecoration(ground, Transform(Vec3(0.0, 0.0, 0.0)), DecorativeSphere(0.05).setColor(Vec3(1,0,0)));
             m_viz->addDecoration(ground, Transform(Vec3(0.0, 0.0, 0.0)), DecorativeSphere(0.05).setColor(Vec3(1,0,0)));
         }
-    }
+        getTriggerInfo().setTriggerOnFallingSignTransition(true);
+        getTriggerInfo().setTriggerOnRisingSignTransition(false);
+        }
 
     virtual void handleEvent(State &state, Real accuracy, bool &shouldTerminate) const {
         Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
@@ -411,6 +413,33 @@ private:
     Real m_lines_length;
     Visualizer *m_viz;
 };
+
+class PoseSequenceHandler : public TriggeredEventHandler {
+public:
+    PoseSequenceHandler(MobilizedBody *lines_mobile, double lines_length) : TriggeredEventHandler(Stage::Velocity), 
+        m_lines_mobile(lines_mobile), m_lines_length(lines_length)
+    {
+        // getTriggerInfo().setTriggerOnRisingSignTransition(false);
+    }
+
+    Real getValue(const State& state) const override {
+        Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
+        Vec3 bar_vel = m_lines_mobile->findStationVelocityInGround(state, Vec3(0, -m_lines_length, 0));
+        double angle = atan2(bar_pos[0], bar_pos[1]);
+        double dangle = 1.0/(1.0 + (bar_pos[0]*bar_pos[0])/(bar_pos[1]*bar_pos[1]))*(bar_pos[1]*bar_vel[0]-bar_pos[0]*bar_vel[1])/(bar_pos[1]*bar_pos[1]);
+        std::cout << "angle " << angle << " " << dangle << std::endl;
+        return 1.0;
+    }
+
+    void handleEvent(State& state, Real accuracy, bool& shouldTerminate) const override {
+        // do some stuff
+    }
+
+private:
+    MobilizedBody *m_lines_mobile;
+    Real m_lines_length;
+};
+
 
 typedef struct {
     Body::Rigid fly_crane, lines_bar, net;
@@ -641,9 +670,11 @@ int main(int argc, char *argv[]) {
 
     // show last peak height
     PeakHeightDetector *peak = new PeakHeightDetector(&rig.lines_mobile, rig_params["lines_length"], matter.Ground(), viz);
-    peak->getTriggerInfo().setTriggerOnFallingSignTransition(true);
-    peak->getTriggerInfo().setTriggerOnRisingSignTransition(false);
     system.addEventHandler(peak);
+
+    // do sequence of poses
+    PoseSequenceHandler *posesequence = new PoseSequenceHandler(&rig.lines_mobile, rig_params["lines_length"]);
+    system.addEventHandler(posesequence);
 
     // print out bar in phase space
     std::ofstream report_io;
