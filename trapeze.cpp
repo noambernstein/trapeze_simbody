@@ -33,7 +33,7 @@ void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_ac
     *initial_state_filename = "initial_state_board.data";
     *poses_filename = "poses.data";
     *headless = false;
-    *report_interval = 0.01;
+    *report_interval = 0.0;
 
     int i=1;
     while (i < argc) {
@@ -736,10 +736,12 @@ int main(int argc, char *argv[]) {
     }
 
     // print out bar in phase space
-    std::ofstream report_io;
-    report_io.open("report.data");
-    system.addEventReporter
-       (new BarPositionMonitor(&report_io, &rig.lines_mobile, rig_params["lines_length"], Real(report_interval))); // update forces every 1 ms
+    if (report_interval > 0.0) {
+        std::ofstream report_io;
+        report_io.open("report.data");
+        system.addEventReporter
+           (new BarPositionMonitor(&report_io, &rig.lines_mobile, rig_params["lines_length"], Real(report_interval))); // update forces every 1 ms
+    }
 
     // Initialize the system and state.
     system.realizeTopology ();

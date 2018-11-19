@@ -32,7 +32,7 @@ elbows_max_torque 50.0
 
 shoulders_lower_limit -160.0
 shoulders_upper_limit 5.0
-shoulders_max_torque 75.0
+shoulders_max_torque 175.0
 
 hips_lower_limit -145.0
 hips_upper_limit 45.0
