@@ -19,68 +19,66 @@ void read_map(std::string filename, std::map<std::string,double> &param_map) {
     inFile.close();
 }
 
-#define USAGE "Usage: "<<argv[0]<<" [ --slow RATE ] [ --rig file ] [ --flyer file ] [ --initial_state file ] [ --poses file ] [ --report interval ]"
-
-void args_to_map(int argc, char *argv[], std::map<std::string,std::string> &args_map) {
-    for (int i=1; i < argc; i++) {
-        if (i < argc-1) {
-            args_map[std::string(argv[i])] = std::string(argv[i+1]);
-            i += 1;
-        } else {
-            std::cerr << "Got argument number "<<i<<" '"<<argv[i]<<"' but no following value" << std::endl;
-            std::cerr << USAGE << std::endl;
-            exit(1);
-        }
-    }
-}
+#define USAGE "Usage: "<<argv[0]<<" [ --slow RATE ] [ --rig file ] [ --flyer file ] [ --initial_state file ]\n\
+       [ --poses file ] [ --report interval ] [ --pose_seq pose_0 name_0 pose_1 name_1 ... ]\n"
 
 void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_accel,
     std::string *rig_filename, std::string *flyer_filename, std::string *initial_state_filename, std::string *poses_filename,
-    bool *headless, double *report_interval) {
+    bool *headless, double *report_interval, std::vector<double> *pose_marks, std::vector<std::string> *pose_names) {
 
-    std::map<std::string,std::string> args_map;
+    *slow_mo_rate = 1.0;
+    *gravity_accel = 9.8;
+    *rig_filename = "rig.data";
+    *flyer_filename = "flyer.data";
+    *initial_state_filename = "initial_state_board.data";
+    *poses_filename = "poses.data";
+    *headless = false;
+    *report_interval = 0.01;
 
-    args_to_map(argc, argv, args_map);
-
-    if (args_map.find("--slow") == args_map.end()) {
-        *slow_mo_rate = 1.0;
-    } else {
-        *slow_mo_rate = 1.0/std::stod(args_map["--slow"]);
-    }
-    if (args_map.find("--gravity") == args_map.end()) {
-        *gravity_accel = 9.8;
-    } else {
-        *gravity_accel = std::stod(args_map["--gravity"]);
-    }
-    if (args_map.find("--rig") == args_map.end()) {
-        *rig_filename = "rig.data";
-    } else {
-        *rig_filename = args_map["--rig"];
-    }
-    if (args_map.find("--flyer") == args_map.end()) {
-        *flyer_filename = "flyer.data";
-    } else {
-        *flyer_filename = args_map["--flyer"];
-    }
-    if (args_map.find("--initial_state") == args_map.end()) {
-        *initial_state_filename = "initial_state_board.data";
-    } else {
-        *initial_state_filename = args_map["--initial_state"];
-    }
-    if (args_map.find("--poses") == args_map.end()) {
-        *poses_filename = "poses.data";
-    } else {
-        *poses_filename = args_map["--poses"];
-    }
-    if (args_map.find("--headless") == args_map.end()) {
-        *headless = false;
-    } else {
-        *headless = args_map["--headless"] == "true";
-    }
-    if (args_map.find("--report") == args_map.end()) {
-        *report_interval = 0.01;
-    } else {
-        *report_interval = std::stod(args_map["--report"]);
+    int i=1;
+    while (i < argc) {
+        if (std::string(argv[i]).find("--slow") == 0) {
+            if (i == argc-1) { std::cerr << "got --slow but no following value" << std::endl; exit(1); }
+            *slow_mo_rate = 1.0/std::stod(argv[i+1]);
+            i++;
+        } else if (std::string(argv[i]).find("--gravity") == 0) {
+            if (i == argc-1) { std::cerr << "got --gravity but no following value" << std::endl; exit(1); }
+            *gravity_accel = std::stod(argv[i+1]);
+            i++;
+        } else if (std::string(argv[i]).find("--rig") == 0) {
+            if (i == argc-1) { std::cerr << "got --rig but no following value" << std::endl; exit(1); }
+            *rig_filename = std::string(argv[i+1]);
+            i++;
+        } else if (std::string(argv[i]).find("--flyer") == 0) {
+            if (i == argc-1) { std::cerr << "got --flyer but no following value" << std::endl; exit(1); }
+            *flyer_filename = std::string(argv[i+1]);
+            i++;
+        } else if (std::string(argv[i]).find("--initial_state") == 0) {
+            if (i == argc-1) { std::cerr << "got --initial_state but no following value" << std::endl; exit(1); }
+            *initial_state_filename = std::string(argv[i+1]);
+            i++;
+        } else if (std::string(argv[i]).find("--poses") == 0) {
+            if (i == argc-1) { std::cerr << "got --poses but no following value" << std::endl; exit(1); }
+            *poses_filename = std::string(argv[i+1]);
+            i++;
+        } else if (std::string(argv[i]).find("--headless") == 0) {
+            *headless = true;
+        } else if (std::string(argv[i]).find("--report") == 0) {
+            if (i == argc-1) { std::cerr << "got --report but no following value" << std::endl; exit(1); }
+            *report_interval = std::stod(argv[i+1]);
+            i++;
+        } else if (std::string(argv[i]).find("--pose_seq") == 0) {
+            for (int j=i+1; j < argc; j += 2) {
+                if (j == argc-1) { std::cerr << "got odd number of arguments for --pose_seq" << std::endl; exit(1); }
+                pose_marks->push_back(std::stod(argv[j]));
+                pose_names->push_back(std::string(argv[j+1]));
+            }
+            return;
+        } else {
+            std::cerr << "got unknown arg '" << argv[i] << "'" << std::endl;
+            exit(2);
+        }
+        i++;
     }
 }
 
@@ -369,7 +367,10 @@ public:
     {
         Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
         Vec3 bar_vel = m_lines_mobile->findStationVelocityInGround(state, Vec3(0, -m_lines_length, 0));
-        *m_report_io << state.getTime() << " bar phase " << bar_pos[0] <<" "<< bar_pos[1] << "  " << bar_vel[0] << " " <<  bar_vel[1] << std::endl;
+        double phase = atan2(-bar_vel[0], bar_pos[0])/M_PI;
+        phase  += (phase < 0.0) ? 2.0 : 0.0;
+        *m_report_io << state.getTime() << " bar pos " << bar_pos[0] <<" "<< bar_pos[1] << " vel  " << bar_vel[0] << " " <<  bar_vel[1] << 
+            " phase " << phase << std::endl;
     }
 
 private:
@@ -414,30 +415,82 @@ private:
     Visualizer *m_viz;
 };
 
+class PoseSequence {
+public:
+    PoseSequence(Pose *pose, std::vector<std::string> pose_names) : m_pose(pose), m_pose_names(pose_names), cur_pose_ind(-1) {
+        n_poses = pose_names.size();
+    }
+
+    void next_pose(const int pose_ind) {
+        if (pose_ind == ((cur_pose_ind+1) % n_poses) ) {
+std::cout << "next_pose going to " << m_pose_names[pose_ind] << std::endl;
+            cur_pose_ind = pose_ind;
+            m_pose->set_pose(m_pose_names[cur_pose_ind]);
+        }
+    }
+
+private:
+    Pose *m_pose;
+    std::vector<std::string> m_pose_names;
+    int cur_pose_ind, n_poses;
+};
+
 class PoseSequenceHandler : public TriggeredEventHandler {
 public:
-    PoseSequenceHandler(MobilizedBody *lines_mobile, double lines_length) : TriggeredEventHandler(Stage::Velocity), 
-        m_lines_mobile(lines_mobile), m_lines_length(lines_length)
+    PoseSequenceHandler(MobilizedBody *lines_mobile, double lines_length, std::vector<double> marks, PoseSequence *seq) : 
+        TriggeredEventHandler(Stage::Velocity), m_lines_mobile(lines_mobile), m_lines_length(lines_length), m_mark(marks), m_seq(seq)
     {
-        // getTriggerInfo().setTriggerOnRisingSignTransition(false);
+        n_poses = m_mark.size();
+        getTriggerInfo().setTriggerOnFallingSignTransition(true);
+        getTriggerInfo().setTriggerOnRisingSignTransition(false);
+        for (int i=0; i < n_poses; i++) {
+            m_interval_to_next_mark.push_back(m_mark[(i+1) % n_poses] - m_mark[i]);
+            if (m_interval_to_next_mark[i] < 0.0) {
+                m_interval_to_next_mark[i] += 2.0;
+            }
+        }
+    }
+
+    double get_phase(const State &state) const {
+        Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
+        Vec3 bar_vel = m_lines_mobile->findStationVelocityInGround(state, Vec3(0, -m_lines_length, 0));
+        double phase = atan2(-bar_vel[0], bar_pos[0]) / M_PI;
+        return (phase + ((phase < 0.0) ? 2.0 : 0.0));
+    }
+
+    int mark_before_phase(const double phase) const {
+        int mark_i = n_poses-1;
+        for (int i=0; i < n_poses; i++) {
+            if (phase < m_mark[i]) {
+                mark_i = i-1;
+                break;
+            }
+        }
+        return ((mark_i + n_poses) % n_poses);
     }
 
     Real getValue(const State& state) const override {
-        Vec3 bar_pos = m_lines_mobile->findStationLocationInGround(state, Vec3(0, -m_lines_length, 0));
-        Vec3 bar_vel = m_lines_mobile->findStationVelocityInGround(state, Vec3(0, -m_lines_length, 0));
-        double angle = atan2(bar_pos[0], bar_pos[1]);
-        double dangle = 1.0/(1.0 + (bar_pos[0]*bar_pos[0])/(bar_pos[1]*bar_pos[1]))*(bar_pos[1]*bar_vel[0]-bar_pos[0]*bar_vel[1])/(bar_pos[1]*bar_pos[1]);
-        std::cout << "angle " << angle << " " << dangle << std::endl;
-        return 1.0;
+        double phase = get_phase(state);
+        int prev_mark = mark_before_phase(phase);
+        double phase_dist = phase - m_mark[prev_mark];
+        phase_dist += (phase_dist < 0.0 ? 2.0 : 0.0);
+// std::cout << "getValue phase " << phase << " after mark " << prev_mark << " dist " << phase_dist << std::endl;
+        double val = -1.0 + 2.0 * (phase_dist/m_interval_to_next_mark[prev_mark]);
+        return val;
     }
 
     void handleEvent(State& state, Real accuracy, bool& shouldTerminate) const override {
-        // do some stuff
+        double phase = get_phase(state);
+        int prev_mark = mark_before_phase(phase);
+        m_seq->next_pose(prev_mark);
     }
 
 private:
     MobilizedBody *m_lines_mobile;
     Real m_lines_length;
+    std::vector<double> m_mark, m_interval_to_next_mark;
+    PoseSequence *m_seq;
+    int n_poses;
 };
 
 
@@ -613,8 +666,11 @@ int main(int argc, char *argv[]) {
     std::string rig_filename, flyer_filename, initial_state_filename, poses_filename;
     bool headless;
     double report_interval;
+    std::vector<double> seq_marks; 
+    std::vector<std::string> seq_poses; 
 
-    parse_args(argc, argv, &slow_mo_rate, &gravity_accel, &rig_filename, &flyer_filename, &initial_state_filename, &poses_filename, &headless, &report_interval);
+    parse_args(argc, argv, &slow_mo_rate, &gravity_accel, &rig_filename, &flyer_filename, &initial_state_filename, 
+        &poses_filename, &headless, &report_interval, &seq_marks, &seq_poses);
 
     // Create the system.
     MultibodySystem system;
@@ -673,8 +729,11 @@ int main(int argc, char *argv[]) {
     system.addEventHandler(peak);
 
     // do sequence of poses
-    PoseSequenceHandler *posesequence = new PoseSequenceHandler(&rig.lines_mobile, rig_params["lines_length"]);
-    system.addEventHandler(posesequence);
+    if (seq_marks.size() > 0) {
+        PoseSequence *pose_seq = new PoseSequence(&pose, seq_poses);
+        PoseSequenceHandler *pose_seq_handler = new PoseSequenceHandler(&rig.lines_mobile, rig_params["lines_length"], seq_marks, pose_seq);
+        system.addEventHandler(pose_seq_handler);
+    }
 
     // print out bar in phase space
     std::ofstream report_io;
