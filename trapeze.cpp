@@ -20,11 +20,11 @@ void read_map(std::string filename, std::map<std::string,double> &param_map) {
 }
 
 #define USAGE "Usage: "<<argv[0]<<" [ --slow RATE ] [ --rig file ] [ --flyer file ] [ --initial_state file ]\n\
-       [ --poses file ] [ --report interval ] [ --pose_seq pose_0 name_0 pose_1 name_1 ... ]\n"
+       [ --poses file ] [ --report interval ] [ --len time ] [ --pose_seq pose_0 name_0 pose_1 name_1 ... ]\n"
 
 void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_accel,
     std::string *rig_filename, std::string *flyer_filename, std::string *initial_state_filename, std::string *poses_filename,
-    bool *headless, double *report_interval, std::vector<double> *pose_marks, std::vector<std::string> *pose_names) {
+    bool *headless, double *report_interval, double *sim_len, std::vector<double> *pose_marks, std::vector<std::string> *pose_names) {
 
     *slow_mo_rate = 1.0;
     *gravity_accel = 9.8;
@@ -34,6 +34,7 @@ void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_ac
     *poses_filename = "poses.data";
     *headless = false;
     *report_interval = 0.0;
+    *sim_len = 60.0;
 
     int i=1;
     while (i < argc) {
@@ -66,6 +67,10 @@ void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_ac
         } else if (std::string(argv[i]).find("--report") == 0) {
             if (i == argc-1) { std::cerr << "got --report but no following value" << std::endl; exit(1); }
             *report_interval = std::stod(argv[i+1]);
+            i++;
+        } else if (std::string(argv[i]).find("--len") == 0) {
+            if (i == argc-1) { std::cerr << "got --len but no following value" << std::endl; exit(1); }
+            *sim_len = std::stod(argv[i+1]);
             i++;
         } else if (std::string(argv[i]).find("--pose_seq") == 0) {
             for (int j=i+1; j < argc; j += 2) {
@@ -256,7 +261,7 @@ public:
     }
 
     void set_pose(std::string pose_name) {
-        std::cerr << "set_pose doing "<< pose_name <<std::endl;
+        // std::cerr << "set_pose doing "<< pose_name <<std::endl;
         cur_pose = &(poses[pose_name]);
         for (int i=0; i < n_joints; i++) {
             reached_pose[i] = 0;
@@ -402,7 +407,7 @@ public:
                 m_viz->updDecoration(1).setTransform(Transform(bar_pos));
             }
         }
-        std::cout << "bar height " << bar_pos[1] << std::endl;
+        std::cout << state.getTime() << " bar_pos " << bar_pos[0] << " " << bar_pos[1] << std::endl;
     }
 
     virtual Real getValue(const State &state) const {
@@ -423,7 +428,7 @@ public:
 
     void next_pose(const int pose_ind) {
         if (pose_ind == ((cur_pose_ind+1) % n_poses) ) {
-std::cout << "next_pose going to " << m_pose_names[pose_ind] << std::endl;
+            std::cerr << "next_pose going to " << m_pose_names[pose_ind] << std::endl;
             cur_pose_ind = pose_ind;
             m_pose->set_pose(m_pose_names[cur_pose_ind]);
         }
@@ -666,11 +671,12 @@ int main(int argc, char *argv[]) {
     std::string rig_filename, flyer_filename, initial_state_filename, poses_filename;
     bool headless;
     double report_interval;
+    double sim_len;
     std::vector<double> seq_marks; 
     std::vector<std::string> seq_poses; 
 
     parse_args(argc, argv, &slow_mo_rate, &gravity_accel, &rig_filename, &flyer_filename, &initial_state_filename, 
-        &poses_filename, &headless, &report_interval, &seq_marks, &seq_poses);
+        &poses_filename, &headless, &report_interval, &sim_len, &seq_marks, &seq_poses);
 
     // Create the system.
     MultibodySystem system;
@@ -760,5 +766,5 @@ int main(int argc, char *argv[]) {
     RungeKuttaMersonIntegrator integ(system);
     TimeStepper ts(system, integ);
     ts.initialize (state);
-    ts.stepTo(60);
+    ts.stepTo(sim_len);
 }
