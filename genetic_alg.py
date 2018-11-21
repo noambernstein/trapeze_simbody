@@ -6,7 +6,7 @@ import numpy as np
 # ./trapeze --headless --len 25 --pose_seq `cat pose_seq_swing.data` | egrep 'bar_pos -' | nl | head -4 | tail -1
 
 n_pop = 20
-n_gen = 20
+n_gen = 200
 
 poses = ["sweep", "curl_in", "flat", "hollow", "sweep", "early_seven", "seven"]
 default_times = [0.1, 0.45, 0.8, 1.2, 1.4, 1.6, 1.9 ]
@@ -33,13 +33,23 @@ def eval_params(timing_params, poses):
 
     return np.array(scores)
 
-pert_params(timing_params, 0.1)
+scores = eval_params([timing_params[0]], poses)
+max_score_ind = np.argmax(scores)
+max_score = scores[max_score_ind]
+print "# BEST ", -1, max_score, " ".join([str(x) for x in timing_params[max_score_ind]])
+sys.stdout.flush()
+
+pert_params(timing_params, 0.01)
 
 scores = eval_params(timing_params, poses)
 for i in range(len(scores)):
     print 0, scores[i], " ".join([str(x) for x in timing_params[i]])
+max_score_ind = np.argmax(scores)
+max_score = scores[max_score_ind]
+print "# BEST ", 0, max_score, " ".join([str(x) for x in timing_params[max_score_ind]])
 print ""
 print ""
+sys.stdout.flush()
 
 for i_gen in range(n_gen):
     # find best half
@@ -49,6 +59,7 @@ for i_gen in range(n_gen):
     timing_params[n_pop/2:] = timing_params[0:n_pop/2]
     # permute
     np.random.shuffle(timing_params)
+    # cross half
     for i in range(0,n_pop/2,2):
         (c1, c2) = np.random.choice(n_params+1, 2, replace=False)
         if c1 > c2:
@@ -58,10 +69,20 @@ for i_gen in range(n_gen):
         p2 = np.select([np.logical_not(mask), mask], [timing_params[i], timing_params[i+1]])
         timing_params[i][:] = p1
         timing_params[i+1][:] = p2
-    pert_params(timing_params, 0.04)
 
+    # perturb
+    pert_params(timing_params, 0.006)
+
+    # new scores
     scores = eval_params(timing_params, poses)
+    # print set
     for i in range(len(scores)):
         print i_gen+1, scores[i], " ".join([str(x) for x in timing_params[i]])
+    # check for new best
+    max_score_ind = np.argmax(scores)
+    if scores[max_score_ind] > max_score:
+        max_score = scores[max_score_ind]
+        print "# BEST ", i_gen+1, max_score, " ".join([str(x) for x in timing_params[max_score_ind]])
     print ""
     print ""
+    sys.stdout.flush()
