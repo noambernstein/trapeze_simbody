@@ -13,7 +13,11 @@ POSE flat f 5 -
 POSE hollow h 2 flat
     shoulders -20 -
     hips      -20 -
-POSE sweep s 3 flat
+POSE sweep1 s 3 flat
+    shoulders  5 -
+    hips      45 -
+    knees     10 -
+POSE sweep2 S 3 flat
     shoulders  5 -
     hips      45 -
     knees     10 -
