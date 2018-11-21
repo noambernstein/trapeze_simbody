@@ -21,22 +21,24 @@ def pert_params(timing_params, mag):
     timing_params[np.where(timing_params < 0.01)] = 0.01
     timing_params[np.where(timing_params > 1.99)] = 1.99
 
+def pose_seq_str(timing_params, poses):
+    return " ".join([str(timing_params[i])+" "+poses[i] for i in range(len(poses))])
 
 def eval_params(timing_params, poses):
     scores = []
     for i_p in range(timing_params.shape[0]):
         sys.stderr.write("eval {}\n".format(i_p))
-        result = os.popen("env DYLD_LIBRARY_PATH=':/Users/noamb/simbody/lib' ./trapeze --headless --len 25 --pose_seq %s | " %
-            " ".join([str(timing_params[i_p,i])+" "+poses[i] for i in range(0,len(poses),2)]) +
-            "egrep 'bar_pos -' | nl | head -4 | tail -1" ).readline()
+        result = os.popen("env DYLD_LIBRARY_PATH=':/Users/noamb/simbody/lib' ./trapeze --headless --len 25 " +
+            "--pose_seq {} " .format(pose_seq_str(timing_params[i_p], poses)) +
+            "| egrep 'bar_pos -' | nl | head -4 | tail -1" ).readline()
         scores.append(float(result.split()[4]))
 
     return np.array(scores)
 
-scores = eval_params([timing_params[0]], poses)
+scores = eval_params(np.array([timing_params[0]]), poses)
 max_score_ind = np.argmax(scores)
 max_score = scores[max_score_ind]
-print "# BEST ", -1, max_score, " ".join([str(x) for x in timing_params[max_score_ind]])
+print "# BEST ", -1, max_score, pose_seq_str(timing_params[max_score_ind], poses)
 sys.stdout.flush()
 
 pert_params(timing_params, 0.01)
@@ -46,7 +48,7 @@ for i in range(len(scores)):
     print 0, scores[i], " ".join([str(x) for x in timing_params[i]])
 max_score_ind = np.argmax(scores)
 max_score = scores[max_score_ind]
-print "# BEST ", 0, max_score, " ".join([str(x) for x in timing_params[max_score_ind]])
+print "# BEST ", 0, max_score, pose_seq_str(timing_params[max_score_ind], poses)
 print ""
 print ""
 sys.stdout.flush()
@@ -82,7 +84,7 @@ for i_gen in range(n_gen):
     max_score_ind = np.argmax(scores)
     if scores[max_score_ind] > max_score:
         max_score = scores[max_score_ind]
-        print "# BEST ", i_gen+1, max_score, " ".join([str(x) for x in timing_params[max_score_ind]])
+        print "# BEST ", i_gen+1, max_score, pose_seq_str(timing_params[max_score_ind], poses)
     print ""
     print ""
     sys.stdout.flush()

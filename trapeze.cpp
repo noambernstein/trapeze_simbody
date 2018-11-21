@@ -104,7 +104,7 @@ void read_sys_state(std::string filename, std::map<std::string,int> joint_index,
 
     inFile.open(filename);
     while (inFile >> key) { 
-        std::cerr << "  reading key " << key << std::endl;
+        // std::cerr << "  reading key " << key << std::endl;
         if (key == "POSE") { // initial pos
             inFile >> pose_name;
         } else { // joint pos vel
@@ -422,13 +422,15 @@ private:
 
 class PoseSequence {
 public:
-    PoseSequence(Pose *pose, std::vector<std::string> pose_names) : m_pose(pose), m_pose_names(pose_names), cur_pose_ind(-1) {
+    PoseSequence(Pose *pose, std::vector<std::string> pose_names, bool quiet) : m_pose(pose), m_pose_names(pose_names), cur_pose_ind(-1), m_quiet(quiet) {
         n_poses = pose_names.size();
     }
 
     void next_pose(const int pose_ind) {
         if (pose_ind == ((cur_pose_ind+1) % n_poses) ) {
-            std::cerr << "next_pose going to " << m_pose_names[pose_ind] << std::endl;
+            if (! m_quiet) {
+                std::cerr << "next_pose going to " << m_pose_names[pose_ind] << std::endl;
+            }
             cur_pose_ind = pose_ind;
             m_pose->set_pose(m_pose_names[cur_pose_ind]);
         }
@@ -438,6 +440,7 @@ private:
     Pose *m_pose;
     std::vector<std::string> m_pose_names;
     int cur_pose_ind, n_poses;
+    bool m_quiet;
 };
 
 class PoseSequenceHandler : public TriggeredEventHandler {
@@ -736,7 +739,7 @@ int main(int argc, char *argv[]) {
 
     // do sequence of poses
     if (seq_marks.size() > 0) {
-        PoseSequence *pose_seq = new PoseSequence(&pose, seq_poses);
+        PoseSequence *pose_seq = new PoseSequence(&pose, seq_poses, headless);
         PoseSequenceHandler *pose_seq_handler = new PoseSequenceHandler(&rig.lines_mobile, rig_params["lines_length"], seq_marks, pose_seq);
         system.addEventHandler(pose_seq_handler);
     }
