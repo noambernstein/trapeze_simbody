@@ -3,10 +3,12 @@
 import os, sys, re
 import numpy as np
 import argparse
-
+from itertools import izip
 
 parser = argparse.ArgumentParser(description="genetic algorithm optimization of trapeze swing")
-parser.add_argument("--initial_params_file",type=str,help="initial parameter file")
+parser.add_argument("--flyer_file",type=str,help="file describing flyer")
+parser.add_argument("--poses_file",type=str,help="file of initial poses")
+parser.add_argument("--pose_seq_file",type=str,help="file of initial pose timings")
 parser.add_argument("--initial_pert",type=float,help="initial perturbation",default=0.01)
 parser.add_argument("--pert",type=float,help="perturbation for each generation",default=0.006)
 parser.add_argument("--n_pop",type=int,help="number of members in population",default=20)
@@ -17,38 +19,28 @@ print "# args", args
 
 output_prefix = args.prefix
 
-if args.initial_params_file is not None:
-    with open(args.initial_params_file) as fin:
-        initial_params = [float(x) for x in fin.readline().split()]
-else:
-    initial_params = None
-
 n_pop = args.n_pop
 n_gen = args.n_gen
 
-poses = ["sweep1", "curl_in", "flat", "hollow", "sweep2", "early_seven", "seven"]
-print "# poses", poses
-initial_timings = [0.1, 0.45, 0.8, 1.2, 1.4, 1.6, 1.9 ]
-
 # read list of joints and max torques
 joint_limits = {}
-with open("flyer.data") as fin:
+with open(args.flyer_file) as fin:
     for l in fin.readlines():
         m = re.search("^\s*([^_]*)_(max_torque|lower_limit|upper_limit)\s+(.+)\s*$", l.strip())
         if m:
             name = m.group(1)
             prop = m.group(2)
-            v = float(m.group(3))
+            val = float(m.group(3))
             if name not in joint_limits:
                 joint_limits[name] = {}
-            joint_limits[name][prop] = v
+            joint_limits[name][prop] = val
 joints = sorted(joint_limits.keys())
 print "# joints", joints
 
-# read initial pose params into dict
+# read initial poses into dict
 pose_params = {}
 cur_pose = None
-with open("poses.data") as fin:
+with open(args.poses_file) as fin:
     for l in fin.readlines():
         m = re.search("^\s*POSE\s+([^ ]+)\s+.\s+[0-9]+\s+([^ ]+)\s*$",l.strip())
         if m:
@@ -60,71 +52,80 @@ with open("poses.data") as fin:
                 pose_params[cur_pose] = [None] * (2*len(joints))
         else:
             m = re.search("^\s*([^ ]+)\s+([^ ]+)\s+([^ ]+)", l.strip())
-            name = m.group(1)
+            joint_name = m.group(1)
             angle = float(m.group(2))
             max_torque = m.group(3)
             if max_torque == "-":
-                max_torque = joint_limits[name]["max_torque"]
+                max_torque = joint_limits[joint_name]["max_torque"]
             else:
                 max_torque = float(max_torque)
-            pose_params[cur_pose][2*joints.index(name)] = angle
-            pose_params[cur_pose][2*joints.index(name)+1] = max_torque
-pose_params_vec = []
-for pose in sorted(poses):
-    pose_params_vec.extend(pose_params[pose])
+            pose_params[cur_pose][2*joints.index(joint_name)] = angle
+            pose_params[cur_pose][2*joints.index(joint_name)+1] = max_torque
+print "got pose_params", pose_params.keys()
+
+pose_timings = []
+pose_seq = []
+with open(args.pose_seq_file) as fin:
+    l = fin.readline()
+    for (pose_time, pose_name) in izip(l.split()[0::2], l.split()[1::2]):
+        pose_timings.append(float(pose_time))
+        pose_seq.append(pose_name)
+print "got pose_timings", pose_timings
+print "got pose_names", pose_seq
+n_pose_seq = len(pose_seq)
 
 # initialize params
-n_params = len(initial_timings) + len(pose_params_vec)
+initial_params_vec = []
+initial_params_vec.extend(pose_timings)
+for pose in sorted(pose_seq):
+    initial_params_vec.extend(pose_params[pose])
+n_params = len(initial_params_vec)
 params = np.zeros((n_pop,n_params))
-if initial_params is None:
-    params[:,:] = initial_timings + pose_params_vec
-else:
-    params[:,:] = initial_params
+params[:,:] = initial_params_vec
 
 # initialize param limits
 params_min = np.zeros((n_pop,n_params))
 params_max = np.zeros((n_pop,n_params))
-params_min[:,0:len(initial_timings)] = 0.01
-params_max[:,0:len(initial_timings)] = 1.99
-for (pose_i, pose) in enumerate(sorted(poses)):
+# timings params
+params_min[:,0:n_pose_seq] = 0.001
+params_max[:,0:n_pose_seq] = 1.999
+# pose params
+for (pose_i, pose) in enumerate(sorted(pose_seq)):
     for (joint_i, joint) in enumerate(joints):
-        params_min[:,len(initial_timings)+pose_i*len(joints)*2+joint_i*2] = joint_limits[joint]["lower_limit"]
-        params_max[:,len(initial_timings)+pose_i*len(joints)*2+joint_i*2] = joint_limits[joint]["upper_limit"]
-        params_min[:,len(initial_timings)+pose_i*len(joints)*2+joint_i*2+1] = 0.0
-        params_max[:,len(initial_timings)+pose_i*len(joints)*2+joint_i*2+1] = joint_limits[joint]["max_torque"]
+        params_min[:,n_pose_seq+pose_i*len(joints)*2+joint_i*2] = joint_limits[joint]["lower_limit"]
+        params_max[:,n_pose_seq+pose_i*len(joints)*2+joint_i*2] = joint_limits[joint]["upper_limit"]
+        params_min[:,n_pose_seq+pose_i*len(joints)*2+joint_i*2+1] = 0.0
+        params_max[:,n_pose_seq+pose_i*len(joints)*2+joint_i*2+1] = joint_limits[joint]["max_torque"]
 
-def write_poses(fout, pose_params):
+def write_poses(fout, pose_params, pose_seq):
     kf = ord('a')
-    for (ki, pose) in enumerate(sorted(poses)):
+    for (ki, pose) in enumerate(sorted(pose_seq)):
         fout.write("POSE {} {} {} -\n".format(pose, chr(kf+ki), len(joints)))
         for (ji, joint) in enumerate(joints):
             fout.write("   {} {} {}\n".format(joint, pose_params[ki*len(joints)*2+ji*2], pose_params[ki*len(joints)*2+ji*2+1]))
 
+def pose_seq_str(params, pose_seq):
+    return " ".join([str(params[i])+" "+pose_seq[i] for i in range(len(pose_seq))])
+
 def pert_params(params, mag):
     params_range = params_max - params_min
     params += params_range*np.random.normal(scale=mag, size=params.shape)
-    timing_params = params[:,:len(initial_timings)]
+    timing_params = params[:,:n_pose_seq]
     timing_params.sort(axis=1)
-    params[:,:len(initial_timings)] = timing_params
+    params[:,:n_pose_seq] = timing_params
     too_low_ind = np.where(params < params_min)
     params[too_low_ind] = params_min[too_low_ind]
     too_high_ind = np.where(params > params_max)
     params[too_high_ind] = params_max[too_high_ind]
 
-def pose_seq_str(params, poses):
-    return " ".join([str(params[i])+" "+poses[i] for i in range(len(poses))])
-
-def eval_params(params, poses):
+def eval_params(params, pose_seq):
     scores = []
     for i_p in range(params.shape[0]):
         sys.stderr.write("eval {}\n".format(i_p))
         with open("t_poses.data","w") as fout:
-            write_poses(fout, params[i_p][len(initial_timings):])
-        # print("env DYLD_LIBRARY_PATH=':/Users/noamb/simbody/lib' ./trapeze --headless --len 25 " +
-            # "--poses t_poses.data --pose_seq {} " .format(pose_seq_str(params[i_p][0:len(initial_timings)], poses)) +
-            # "| egrep 'bar_pos -' | nl | head -4 | tail -1" )
+            write_poses(fout, params[i_p][n_pose_seq:], pose_seq)
         result = os.popen("env DYLD_LIBRARY_PATH=':/Users/noamb/simbody/lib' ./trapeze --headless --len 25 " +
-            "--poses t_poses.data --pose_seq {} " .format(pose_seq_str(params[i_p][0:len(initial_timings)], poses)) +
+            "--flyer {} --poses t_poses.data --pose_seq {} " .format(args.flyer_file, pose_seq_str(params[i_p][0:n_pose_seq], pose_seq)) +
             "| egrep 'bar_pos -' | nl | head -4 | tail -1" ).readline()
         scores.append(float(result.split()[4]))
 
@@ -138,31 +139,27 @@ def process_best(max_score, prefix, scores, params, iter_label):
 
         print "# BEST ", iter_label, max_score
 
-        with open(prefix+".poses.{}.genetic.restart".format(iter_label),"w") as fout:
-            fout.write(" ".join(str(x) for x in params[max_score_ind])+"\n")
-        with open(prefix+".poses.{}.genetic.seq_string".format(iter_label),"w") as fout:
-            fout.write(pose_seq_str(params[max_score_ind], poses)+"\n")
-        with open(prefix+".poses.{}.genetic.data".format(iter_label),"w") as fout:
-            write_poses(fout, params[max_score_ind][len(initial_timings):])
+        with open(prefix+".genetic_opt.{}.pose_seq.data".format(iter_label),"w") as fout:
+            fout.write(pose_seq_str(params[max_score_ind], pose_seq)+"\n")
+        with open(prefix+".genetic_opt.{}.poses.data".format(iter_label),"w") as fout:
+            write_poses(fout, params[max_score_ind][n_pose_seq:], pose_seq)
 
-        with open(prefix+".poses.{}.genetic.restart".format("BEST"),"w") as fout:
-            fout.write(" ".join(str(x) for x in params[max_score_ind])+"\n")
-        with open(prefix+".poses.{}.genetic.seq_string".format("BEST"),"w") as fout:
-            fout.write(pose_seq_str(params[max_score_ind], poses)+"\n")
-        with open(prefix+".poses.{}.genetic.data".format("BEST"),"w") as fout:
-            write_poses(fout, params[max_score_ind][len(initial_timings):])
+        with open(prefix+".genetic_opt.{}.pose_seq.data".format("BEST"),"w") as fout:
+            fout.write(pose_seq_str(params[max_score_ind], pose_seq)+"\n")
+        with open(prefix+".genetic_opt.{}.poses.data".format("BEST"),"w") as fout:
+            write_poses(fout, params[max_score_ind][n_pose_seq:], pose_seq)
 
     return max_score
 
 # write initial set
-scores = eval_params(np.array([params[0]]), poses)
+scores = eval_params(np.array([params[0]]), pose_seq)
 max_score = process_best(-1.0e38, output_prefix, scores, params, -1)
 sys.stdout.flush()
 
 pert_params(params, args.initial_pert)
 
 # write initial perturbation set and the best (if better than initial)
-scores = eval_params(params, poses)
+scores = eval_params(params, pose_seq)
 for i in range(len(scores)):
     print 0, scores[i], " ".join([str(x) for x in params[i]])
 print ""
@@ -193,7 +190,7 @@ for i_gen in range(n_gen):
     pert_params(params, args.pert)
 
     # new scores
-    scores = eval_params(params, poses)
+    scores = eval_params(params, pose_seq)
     # print set
     for i in range(len(scores)):
         print i_gen+1, scores[i], " ".join([str(x) for x in params[i]])

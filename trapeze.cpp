@@ -29,7 +29,7 @@ void parse_args(int argc, char *argv[], double *slow_mo_rate, double *gravity_ac
     *slow_mo_rate = 1.0;
     *gravity_accel = 9.8;
     *rig_filename = "rig.data";
-    *flyer_filename = "flyer.data";
+    *flyer_filename = "flyer_realistic.data";
     *initial_state_filename = "initial_state_board.data";
     *poses_filename = "poses.data";
     *headless = false;
