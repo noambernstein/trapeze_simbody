@@ -2,23 +2,29 @@
 
 import os, sys, re
 import numpy as np
+import argparse
 
-if len(sys.argv) != 2 and len(sys.argv) != 3:
-    sys.stderr.write("Usage: {} output_prefix [ param_list_file ]\n".format(sys.argv[0]))
-    sys.exit(1)
 
-output_prefix = sys.argv[1]
+parser = argparse.ArgumentParser(description="genetic algorithm optimization of trapeze swing")
+parser.add_argument("--initial_params_file",type=str,help="initial parameter file")
+parser.add_argument("--initial_pert",type=float,help="initial perturbation",default=0.01)
+parser.add_argument("--pert",type=float,help="perturbation for each generation",default=0.006)
+parser.add_argument("--n_pop",type=int,help="number of members in population",default=20)
+parser.add_argument("--n_gen",type=int,help="number of generations",default=200)
+parser.add_argument("prefix",type=str,help="prefix for output files")
+args = parser.parse_args()
+print "# args", args
 
-if len(sys.argv) == 3:
-    with open(sys.argv[2]) as fin:
+output_prefix = args.prefix
+
+if args.initial_params_file is not None:
+    with open(args.initial_params_file) as fin:
         initial_params = [float(x) for x in fin.readline().split()]
 else:
     initial_params = None
 
-# ./trapeze --headless --len 25 --pose_seq `cat pose_seq_swing.data` | egrep 'bar_pos -' | nl | head -4 | tail -1
-
-n_pop = 20
-n_gen = 200
+n_pop = args.n_pop
+n_gen = args.n_gen
 
 poses = ["sweep1", "curl_in", "flat", "hollow", "sweep2", "early_seven", "seven"]
 print "# poses", poses
@@ -95,7 +101,8 @@ def write_poses(fout, pose_params):
             fout.write("   {} {} {}\n".format(joint, pose_params[ki*len(joints)*2+ji*2], pose_params[ki*len(joints)*2+ji*2+1]))
 
 def pert_params(params, mag):
-    params *= (1.0+np.random.normal(scale=mag, size=params.shape))
+    params_range = params_max - params_min
+    params += params_range*np.random.normal(scale=mag, size=params.shape)
     timing_params = params[:,:len(initial_timings)]
     timing_params.sort(axis=1)
     params[:,:len(initial_timings)] = timing_params
@@ -123,37 +130,45 @@ def eval_params(params, poses):
 
     return np.array(scores)
 
+def process_best(max_score, prefix, scores, params, iter_label):
+    max_score_ind = np.argmax(scores)
+
+    if scores[max_score_ind] > max_score:
+        max_score = scores[max_score_ind]
+
+        print "# BEST ", iter_label, max_score
+
+        with open(prefix+".poses.{}.genetic.restart".format(iter_label),"w") as fout:
+            fout.write(" ".join(str(x) for x in params[max_score_ind])+"\n")
+        with open(prefix+".poses.{}.genetic.seq_string".format(iter_label),"w") as fout:
+            fout.write(pose_seq_str(params[max_score_ind], poses)+"\n")
+        with open(prefix+".poses.{}.genetic.data".format(iter_label),"w") as fout:
+            write_poses(fout, params[max_score_ind][len(initial_timings):])
+
+        with open(prefix+".poses.{}.genetic.restart".format("BEST"),"w") as fout:
+            fout.write(" ".join(str(x) for x in params[max_score_ind])+"\n")
+        with open(prefix+".poses.{}.genetic.seq_string".format("BEST"),"w") as fout:
+            fout.write(pose_seq_str(params[max_score_ind], poses)+"\n")
+        with open(prefix+".poses.{}.genetic.data".format("BEST"),"w") as fout:
+            write_poses(fout, params[max_score_ind][len(initial_timings):])
+
+    return max_score
+
 # write initial set
 scores = eval_params(np.array([params[0]]), poses)
-max_score_ind = np.argmax(scores)
-max_score = scores[max_score_ind]
-print "# BEST ", -1, max_score # , pose_seq_str(params[max_score_ind], poses)
+max_score = process_best(-1.0e38, output_prefix, scores, params, -1)
 sys.stdout.flush()
-with open(output_prefix+".poses.{}.genetic.restart".format(-1),"w") as fout:
-    fout.write(" ".join(str(x) for x in params[max_score_ind])+"\n")
-with open(output_prefix+".poses.{}.genetic.seq_string".format(-1),"w") as fout:
-    fout.write(pose_seq_str(params[max_score_ind], poses)+"\n")
-with open(output_prefix+".poses.{}.genetic.data".format(-1),"w") as fout:
-    write_poses(fout, params[max_score_ind][len(initial_timings):])
 
-pert_params(params, 0.01)
+pert_params(params, args.initial_pert)
 
-# write best of initial perturbation
+# write initial perturbation set and the best (if better than initial)
 scores = eval_params(params, poses)
 for i in range(len(scores)):
     print 0, scores[i], " ".join([str(x) for x in params[i]])
-max_score_ind = np.argmax(scores)
-max_score = scores[max_score_ind]
-print "# BEST ", 0, max_score # , pose_seq_str(params[max_score_ind], poses)
 print ""
 print ""
+max_score = process_best(max_score, output_prefix, scores, params, 0)
 sys.stdout.flush()
-with open(output_prefix+".poses.{}.genetic.restart".format(0),"w") as fout:
-    fout.write(" ".join(str(x) for x in params[max_score_ind])+"\n")
-with open(output_prefix+".poses.{}.genetic.seq_string".format(0),"w") as fout:
-    fout.write(pose_seq_str(params[max_score_ind], poses)+"\n")
-with open(output_prefix+".poses.{}.genetic.data".format(0),"w") as fout:
-    write_poses(fout, params[max_score_ind][len(initial_timings):])
 
 for i_gen in range(n_gen):
     # find best half
@@ -175,24 +190,15 @@ for i_gen in range(n_gen):
         params[i+1][:] = p2
 
     # perturb
-    pert_params(params, 0.006)
+    pert_params(params, args.pert)
 
     # new scores
     scores = eval_params(params, poses)
     # print set
     for i in range(len(scores)):
         print i_gen+1, scores[i], " ".join([str(x) for x in params[i]])
+    print ""
+    print ""
     # check for new best
-    max_score_ind = np.argmax(scores)
-    if scores[max_score_ind] > max_score:
-        max_score = scores[max_score_ind]
-        print "# BEST ", i_gen+1, max_score # , pose_seq_str(params[max_score_ind], poses)
-        print ""
-        print ""
-        sys.stdout.flush()
-        with open(output_prefix+".poses.{}.genetic.restart".format(i_gen+1),"w") as fout:
-            fout.write(" ".join(str(x) for x in params[max_score_ind])+"\n")
-        with open(output_prefix+".poses.{}.genetic.seq_string".format(i_gen+1),"w") as fout:
-            fout.write(pose_seq_str(params[max_score_ind], poses)+"\n")
-        with open(output_prefix+".poses.{}.genetic.data".format(i_gen+1),"w") as fout:
-            write_poses(fout, params[max_score_ind][len(initial_timings):])
+    max_score = process_best(max_score, output_prefix, scores, params, i_gen+1)
+    sys.stdout.flush()
